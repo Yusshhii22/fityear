@@ -3,15 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#070b14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>FitYear — Your 1-Year Fitness Journey</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app">
     <!-- Rendered by app.js -->
   </div>
+  <div id="printview"><!-- print-only weekly sheet, filled on demand --></div>
   <script src="data.js"></script>
   <script src="planner.js"></script>
   <script src="app.js"></script>
+  <script>
+    // PWA offline support (requires http(s); skipped when opened as a local file)
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      navigator.serviceWorker.register("sw.js");
+    }
+  </script>
 </body>
 </html>

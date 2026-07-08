@@ -1,4 +1,4 @@
-// ===== FitYear data: exercises, splits, meals =====
+// ===== FitYear data: exercises, splits, phases, ingredients, meals =====
 
 // Exercises grouped by equipment level, then by movement category.
 // Each entry: [name, note]
@@ -79,76 +79,163 @@ const PHASES = [
   { from: 52, to: 52, name: "Victory Lap",      sets: 3, reps: "10",    rest: "90s",  intensity: "Moderate (RPE 7)",      focus: "One year done. Re-test everything from week 1, take final photos, and plan year two. Be proud." },
 ];
 
+// ===== Ingredients =====
+// Nutrition per 100g (approximate). `piece` = grams per countable unit for display.
+// cat: produce | grains | protein | dairy | pantry
+const INGREDIENTS = {
+  "oats":                { cat: "grains",  kcal: 389, prot: 13.5 },
+  "poha":                { cat: "grains",  kcal: 350, prot: 6.6 },
+  "besan":               { cat: "grains",  kcal: 387, prot: 22 },
+  "granola":             { cat: "grains",  kcal: 450, prot: 10 },
+  "whole-wheat bread":   { cat: "grains",  kcal: 250, prot: 12, piece: 30, pieceName: "slice" },
+  "roti":                { cat: "grains",  kcal: 300, prot: 10, piece: 40, pieceName: "roti" },
+  "rice (cooked)":       { cat: "grains",  kcal: 130, prot: 2.7 },
+  "quinoa (cooked)":     { cat: "grains",  kcal: 120, prot: 4.4 },
+  "egg":                 { cat: "protein", kcal: 143, prot: 12.5, piece: 50, pieceName: "egg" },
+  "chicken breast":      { cat: "protein", kcal: 165, prot: 31 },
+  "chicken (curry cut)": { cat: "protein", kcal: 170, prot: 20 },
+  "chicken keema":       { cat: "protein", kcal: 170, prot: 20 },
+  "chicken sausage":     { cat: "protein", kcal: 200, prot: 14, piece: 50, pieceName: "sausage" },
+  "fish fillet":         { cat: "protein", kcal: 100, prot: 21 },
+  "tuna (canned)":       { cat: "protein", kcal: 116, prot: 26 },
+  "tofu":                { cat: "protein", kcal: 76,  prot: 8 },
+  "soya chunks (dry)":   { cat: "protein", kcal: 345, prot: 52 },
+  "dal (cooked)":        { cat: "protein", kcal: 120, prot: 7.5 },
+  "rajma (cooked)":      { cat: "protein", kcal: 127, prot: 8.7 },
+  "chole (cooked)":      { cat: "protein", kcal: 164, prot: 8.9 },
+  "edamame":             { cat: "protein", kcal: 122, prot: 11 },
+  "paneer":              { cat: "dairy",   kcal: 296, prot: 18 },
+  "milk":                { cat: "dairy",   kcal: 62,  prot: 3.2 },
+  "almond milk":         { cat: "dairy",   kcal: 17,  prot: 0.6 },
+  "curd":                { cat: "dairy",   kcal: 60,  prot: 3.5 },
+  "greek yogurt":        { cat: "dairy",   kcal: 73,  prot: 10 },
+  "buttermilk":          { cat: "dairy",   kcal: 25,  prot: 1.5 },
+  "banana":              { cat: "produce", kcal: 89,  prot: 1.1, piece: 120, pieceName: "banana" },
+  "apple":               { cat: "produce", kcal: 52,  prot: 0.3, piece: 180, pieceName: "apple" },
+  "berries":             { cat: "produce", kcal: 50,  prot: 0.7 },
+  "onion":               { cat: "produce", kcal: 40,  prot: 1.1 },
+  "tomato":              { cat: "produce", kcal: 18,  prot: 0.9 },
+  "spinach":             { cat: "produce", kcal: 23,  prot: 2.9 },
+  "mixed vegetables":    { cat: "produce", kcal: 40,  prot: 2 },
+  "salad veg (cucumber/tomato/onion)": { cat: "produce", kcal: 20, prot: 1 },
+  "moong sprouts":       { cat: "produce", kcal: 30,  prot: 3 },
+  "peanut butter":       { cat: "pantry",  kcal: 590, prot: 25 },
+  "peanuts":             { cat: "pantry",  kcal: 567, prot: 26 },
+  "almonds":             { cat: "pantry",  kcal: 579, prot: 21 },
+  "roasted chana":       { cat: "pantry",  kcal: 369, prot: 17 },
+  "hummus":              { cat: "pantry",  kcal: 166, prot: 8 },
+  "tahini":              { cat: "pantry",  kcal: 595, prot: 17 },
+  "whey protein":        { cat: "pantry",  kcal: 400, prot: 80, piece: 30, pieceName: "scoop" },
+  "plant protein":       { cat: "pantry",  kcal: 380, prot: 70, piece: 30, pieceName: "scoop" },
+  "oil/ghee":            { cat: "pantry",  kcal: 884, prot: 0 },
+  "honey":               { cat: "pantry",  kcal: 304, prot: 0.3 },
+};
+
 // ===== Meals =====
-// Each meal: [name, approx kcal, protein g]. Portions scale with the user's calorie target.
+// Each meal: { n: name, items: [[ingredient, grams], ...] }
+// Macros are computed from ingredients; portions scale with the user's calorie target.
+const M = {
+  oatsPB:      { n: "Oats + banana + peanut butter", items: [["oats", 50], ["milk", 200], ["banana", 120], ["peanut butter", 15]] },
+  oatsVegan:   { n: "Oats in almond milk + banana + peanut butter", items: [["oats", 60], ["almond milk", 250], ["banana", 120], ["peanut butter", 15]] },
+  yogurtBowl:  { n: "Greek yogurt granola bowl", items: [["greek yogurt", 200], ["granola", 50], ["berries", 50], ["honey", 10]] },
+  chanaButtermilk: { n: "Roasted chana + buttermilk", items: [["roasted chana", 40], ["buttermilk", 200]] },
+  appleAlmonds:    { n: "Apple + almonds", items: [["apple", 180], ["almonds", 20]] },
+  wheyBanana:      { n: "Whey protein shake + banana", items: [["whey protein", 30], ["banana", 120]] },
+  plantBanana:     { n: "Plant protein shake + banana", items: [["plant protein", 30], ["banana", 120]] },
+  sproutChaat:     { n: "Sprout chaat with peanuts", items: [["moong sprouts", 150], ["onion", 30], ["tomato", 50], ["peanuts", 20]] },
+  pbToast:         { n: "Peanut butter toast", items: [["whole-wheat bread", 60], ["peanut butter", 20]] },
+  tofuRice:    { n: "Tofu & veg stir-fry + rice", items: [["tofu", 150], ["mixed vegetables", 150], ["rice (cooked)", 180], ["oil/ghee", 10]] },
+  dalKhichdi:  { n: "Dal khichdi + salad", items: [["dal (cooked)", 150], ["rice (cooked)", 150], ["salad veg (cucumber/tomato/onion)", 100], ["oil/ghee", 5]] },
+};
+
 const MEALS = {
   veg: {
     breakfast: [
-      ["Paneer bhurji + 2 whole-wheat toast", 420, 24], ["Oats cooked in milk + banana + peanut butter", 450, 18],
-      ["Besan chilla (2) + curd", 380, 20], ["Greek yogurt + granola + berries", 400, 22],
-      ["Poha with peanuts + glass of milk", 420, 14], ["Moong dal chilla (2) + mint chutney", 360, 22],
+      { n: "Paneer bhurji + toast", items: [["paneer", 80], ["whole-wheat bread", 60], ["onion", 30], ["oil/ghee", 5]] },
+      M.oatsPB,
+      { n: "Besan chilla + curd", items: [["besan", 60], ["onion", 30], ["curd", 100], ["oil/ghee", 5]] },
+      M.yogurtBowl,
+      { n: "Poha with peanuts + milk", items: [["poha", 60], ["peanuts", 20], ["onion", 30], ["oil/ghee", 5], ["milk", 200]] },
     ],
     lunch: [
-      ["Rajma + rice + salad + curd", 550, 22], ["Dal tadka + 2 roti + sabzi + salad", 520, 20],
-      ["Chole + rice + cucumber raita", 560, 21], ["Paneer curry + 2 roti + salad", 580, 28],
-      ["Veg pulao + dal + curd", 540, 18], ["Soya chunk curry + rice + salad", 530, 30],
+      { n: "Rajma chawal + curd + salad", items: [["rajma (cooked)", 200], ["rice (cooked)", 200], ["salad veg (cucumber/tomato/onion)", 100], ["curd", 100]] },
+      { n: "Dal + roti + sabzi", items: [["dal (cooked)", 200], ["roti", 80], ["mixed vegetables", 150], ["oil/ghee", 5]] },
+      { n: "Paneer curry + roti + salad", items: [["paneer", 100], ["roti", 80], ["tomato", 50], ["onion", 30], ["oil/ghee", 10], ["salad veg (cucumber/tomato/onion)", 100]] },
+      { n: "Chole + rice + salad", items: [["chole (cooked)", 200], ["rice (cooked)", 180], ["salad veg (cucumber/tomato/onion)", 100]] },
+      { n: "Soya chunk curry + rice", items: [["soya chunks (dry)", 40], ["rice (cooked)", 200], ["mixed vegetables", 100], ["oil/ghee", 10]] },
     ],
-    snack: [
-      ["Roasted chana + buttermilk", 220, 12], ["Apple + handful of almonds", 230, 6],
-      ["Sprout chaat", 200, 12], ["Protein shake (whey/plant) + banana", 280, 26],
-      ["Peanut butter on whole-wheat toast", 250, 10], ["Paneer tikka (grilled, 100g)", 240, 18],
-    ],
+    snack: [M.chanaButtermilk, M.appleAlmonds, M.wheyBanana, M.sproutChaat, M.pbToast],
     dinner: [
-      ["Palak paneer + 2 roti", 480, 24], ["Dal khichdi + curd + salad", 450, 18],
-      ["Veg curry + 2 roti + salad", 440, 16], ["Paneer bhurji + 2 roti", 470, 26],
-      ["Mixed dal + jeera rice + sabzi", 460, 19], ["Tofu stir-fry + rice", 450, 24],
+      { n: "Palak paneer + roti", items: [["spinach", 150], ["paneer", 80], ["roti", 80], ["oil/ghee", 10]] },
+      { n: "Dal khichdi + curd", items: [["dal (cooked)", 150], ["rice (cooked)", 150], ["curd", 100]] },
+      M.tofuRice,
+      { n: "Paneer bhurji + roti", items: [["paneer", 80], ["roti", 80], ["onion", 30], ["oil/ghee", 5]] },
+      { n: "Mixed dal + jeera rice + sabzi", items: [["dal (cooked)", 200], ["rice (cooked)", 150], ["mixed vegetables", 100], ["oil/ghee", 5]] },
     ],
   },
   nonveg: {
     breakfast: [
-      ["3-egg omelette + 2 whole-wheat toast", 420, 26], ["Oats + milk + banana + peanut butter", 450, 18],
-      ["4 boiled eggs + fruit", 340, 24], ["Egg bhurji (3 eggs) + 2 roti", 460, 26],
-      ["Greek yogurt + granola + berries", 400, 22], ["Chicken sausage (2) + scrambled eggs (2)", 430, 30],
+      { n: "Omelette + toast", items: [["egg", 150], ["whole-wheat bread", 60], ["onion", 20], ["oil/ghee", 5]] },
+      M.oatsPB,
+      { n: "Boiled eggs + apple", items: [["egg", 200], ["apple", 180]] },
+      { n: "Egg bhurji + roti", items: [["egg", 150], ["roti", 80], ["onion", 30], ["oil/ghee", 5]] },
+      { n: "Chicken sausages & scrambled eggs", items: [["chicken sausage", 100], ["egg", 100], ["whole-wheat bread", 30], ["oil/ghee", 5]] },
     ],
     lunch: [
-      ["Grilled chicken (150g) + rice + salad", 580, 40], ["Chicken curry + 2 roti + salad", 560, 35],
-      ["Egg curry (2 eggs) + rice + salad", 520, 22], ["Fish curry + rice + salad", 540, 32],
-      ["Chicken biryani (controlled portion) + raita", 620, 30], ["Dal + 2 roti + grilled chicken (100g)", 550, 34],
+      { n: "Grilled chicken + rice + salad", items: [["chicken breast", 150], ["rice (cooked)", 200], ["salad veg (cucumber/tomato/onion)", 100], ["oil/ghee", 5]] },
+      { n: "Chicken curry + roti", items: [["chicken (curry cut)", 150], ["roti", 80], ["onion", 30], ["tomato", 50], ["oil/ghee", 10]] },
+      { n: "Egg curry + rice", items: [["egg", 100], ["rice (cooked)", 200], ["tomato", 100], ["onion", 30], ["oil/ghee", 10]] },
+      { n: "Fish curry + rice", items: [["fish fillet", 150], ["rice (cooked)", 200], ["tomato", 50], ["oil/ghee", 10]] },
+      { n: "Dal + roti + grilled chicken", items: [["dal (cooked)", 150], ["roti", 40], ["chicken breast", 100], ["oil/ghee", 5]] },
     ],
     snack: [
-      ["Protein shake + banana", 280, 26], ["2 boiled eggs + fruit", 220, 13],
-      ["Roasted chana + buttermilk", 220, 12], ["Chicken tikka (100g, grilled)", 210, 24],
-      ["Apple + handful of almonds", 230, 6], ["Tuna on whole-wheat toast", 260, 22],
+      M.wheyBanana,
+      { n: "Boiled eggs + apple", items: [["egg", 100], ["apple", 90]] },
+      M.chanaButtermilk,
+      { n: "Chicken tikka (grilled)", items: [["chicken breast", 100], ["curd", 30], ["oil/ghee", 3]] },
+      { n: "Tuna toast", items: [["tuna (canned)", 80], ["whole-wheat bread", 60]] },
     ],
     dinner: [
-      ["Grilled fish (150g) + veggies + small rice", 480, 34], ["Chicken breast (150g) + sautéed veg + roti", 500, 40],
-      ["Egg bhurji (3 eggs) + 2 roti", 470, 26], ["Chicken soup + grilled chicken salad", 420, 35],
-      ["Tandoori chicken (2 pieces) + dal + salad", 520, 38], ["Keema (lean, 100g) + 2 roti", 510, 30],
+      { n: "Grilled fish + veg + rice", items: [["fish fillet", 150], ["mixed vegetables", 150], ["rice (cooked)", 120], ["oil/ghee", 10]] },
+      { n: "Chicken breast + veg + roti", items: [["chicken breast", 150], ["mixed vegetables", 150], ["roti", 40], ["oil/ghee", 5]] },
+      { n: "Egg bhurji + roti", items: [["egg", 150], ["roti", 80], ["onion", 30], ["oil/ghee", 5]] },
+      { n: "Chicken & veg soup bowl", items: [["chicken breast", 150], ["mixed vegetables", 100], ["salad veg (cucumber/tomato/onion)", 100], ["oil/ghee", 5]] },
+      { n: "Tandoori chicken + dal + salad", items: [["chicken (curry cut)", 150], ["dal (cooked)", 150], ["salad veg (cucumber/tomato/onion)", 100]] },
     ],
   },
   vegan: {
     breakfast: [
-      ["Oats in almond milk + banana + peanut butter", 430, 14], ["Tofu scramble + 2 whole-wheat toast", 400, 24],
-      ["Besan chilla (2) + mint chutney", 350, 18], ["Smoothie: plant protein + oats + berries + nut butter", 420, 28],
-      ["Poha with peanuts", 380, 10], ["Moong dal chilla (2) + chutney", 360, 22],
+      M.oatsVegan,
+      { n: "Tofu scramble + toast", items: [["tofu", 150], ["whole-wheat bread", 60], ["onion", 30], ["oil/ghee", 5]] },
+      { n: "Besan chilla + chutney", items: [["besan", 60], ["onion", 30], ["oil/ghee", 5], ["tomato", 50]] },
+      { n: "Protein smoothie (oats + banana)", items: [["plant protein", 30], ["oats", 40], ["banana", 120], ["almond milk", 250], ["peanut butter", 10]] },
+      { n: "Poha with peanuts", items: [["poha", 60], ["peanuts", 25], ["onion", 30], ["oil/ghee", 5]] },
     ],
     lunch: [
-      ["Rajma + rice + salad", 530, 20], ["Chole + rice + onion salad", 550, 20],
-      ["Tofu curry + 2 roti + salad", 540, 26], ["Dal tadka + 2 roti + sabzi", 500, 19],
-      ["Soya chunk curry + rice", 530, 30], ["Buddha bowl: quinoa + chickpeas + veg + tahini", 560, 22],
+      { n: "Rajma chawal + salad", items: [["rajma (cooked)", 200], ["rice (cooked)", 200], ["salad veg (cucumber/tomato/onion)", 100]] },
+      { n: "Chole + rice + salad", items: [["chole (cooked)", 200], ["rice (cooked)", 180], ["salad veg (cucumber/tomato/onion)", 100]] },
+      { n: "Tofu curry + roti + salad", items: [["tofu", 200], ["roti", 80], ["tomato", 50], ["onion", 30], ["oil/ghee", 10]] },
+      { n: "Dal + roti + sabzi", items: [["dal (cooked)", 200], ["roti", 80], ["mixed vegetables", 150], ["oil/ghee", 5]] },
+      { n: "Buddha bowl (quinoa + chole + tahini)", items: [["quinoa (cooked)", 200], ["chole (cooked)", 150], ["mixed vegetables", 100], ["tahini", 15]] },
     ],
     snack: [
-      ["Roasted chana + lemon water", 210, 12], ["Plant protein shake + banana", 270, 24],
-      ["Sprout chaat", 200, 12], ["Apple + handful of almonds", 230, 6],
-      ["Peanut butter on whole-wheat toast", 250, 10], ["Edamame (1 cup)", 190, 17],
+      { n: "Roasted chana + lemon water", items: [["roasted chana", 40]] },
+      M.plantBanana,
+      M.sproutChaat,
+      M.appleAlmonds,
+      { n: "Edamame bowl", items: [["edamame", 150]] },
     ],
     dinner: [
-      ["Tofu stir-fry + rice", 450, 24], ["Dal khichdi + salad", 430, 16],
-      ["Chana masala + 2 roti", 460, 18], ["Veg + tofu curry + 2 roti", 470, 22],
-      ["Mixed dal + jeera rice + sabzi", 450, 19], ["Lentil soup + whole-wheat toast + hummus", 440, 20],
+      M.tofuRice,
+      M.dalKhichdi,
+      { n: "Chana masala + roti", items: [["chole (cooked)", 150], ["roti", 80], ["onion", 30], ["tomato", 50], ["oil/ghee", 10]] },
+      { n: "Veg + tofu curry + roti", items: [["tofu", 150], ["mixed vegetables", 100], ["roti", 80], ["oil/ghee", 10]] },
+      { n: "Lentil soup + toast + hummus", items: [["dal (cooked)", 200], ["whole-wheat bread", 60], ["hummus", 40]] },
     ],
   },
 };
+
+const GROCERY_CATS = { produce: "🥬 Produce", grains: "🌾 Grains & Bread", protein: "🍗 Protein & Legumes", dairy: "🥛 Dairy", pantry: "🫙 Pantry" };
 
 const HYDRATION_TIP = "Drink 3–4 L water through the day. Have protein within ~2 hours after training.";
 
