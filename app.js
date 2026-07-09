@@ -221,6 +221,115 @@ function renderOnboarding() {
   });
 }
 
+/* ================= Voice logging (Web Speech API) ================= */
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const VOICE_OK = !!SpeechRec;
+
+const WORD_NUMS = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+};
+
+function wordsToDigits(text) {
+  return text
+    .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+(one|two|three|four|five|six|seven|eight|nine)\b/g,
+      (_, t, u) => WORD_NUMS[t] + WORD_NUMS[u])
+    .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\b/g,
+      (w) => WORD_NUMS[w]);
+}
+
+// "3 sets of 10 at 45 kg" / "45 kilos for ten" / "12 reps" → { kg, reps }
+function parseLift(raw) {
+  let t = ` ${wordsToDigits(raw.toLowerCase())} `.replace(/[×*]|\bx\b/g, " x ");
+  t = t.replace(/(\d+)\s*sets?\s*(?:of)?/g, " "); // we log the top set; set count is noise
+  let kg = null, reps = null;
+
+  const kgM = t.match(/(\d+(?:[.,]\d+)?)\s*(?:kg|kgs|kilos?|kilograms?)/);
+  if (kgM) { kg = parseFloat(kgM[1].replace(",", ".")); t = t.replace(kgM[0], " "); }
+
+  const repM = t.match(/(\d+)\s*(?:reps?|repetitions?|times)/) || t.match(/(?:for|x)\s+(\d+)/);
+  if (repM) { reps = parseInt(repM[1], 10); t = t.replace(repM[0], " "); }
+
+  if (kg === null) {
+    const atM = t.match(/(?:at|with)\s+(\d+(?:[.,]\d+)?)/);
+    if (atM) { kg = parseFloat(atM[1].replace(",", ".")); t = t.replace(atM[0], " "); }
+  }
+  if (/body\s*weight/.test(t)) kg = kg ?? 0;
+
+  // whatever numbers remain, in the order people naturally speak: weight first, reps second
+  const left = (t.match(/\d+(?:\.\d+)?/g) || []).map(Number);
+  if (reps === null && kg !== null && left.length === 1) reps = Math.round(left[0]);
+  else if (reps === null && kg === null && left.length === 2) { kg = left[0]; reps = Math.round(left[1]); }
+  else if (reps === null && kg === null && left.length === 1) { kg = 0; reps = Math.round(left[0]); }
+
+  if (reps === null || reps < 1 || reps > 100) return null;
+  kg = kg ?? 0;
+  if (kg < 0 || kg > 500) return null;
+  return { kg, reps };
+}
+
+function voiceFeedback(box, msg) {
+  const fb = box.querySelector(".voice-feedback");
+  fb.textContent = msg;
+  fb.classList.add("show");
+}
+
+function applyVoiceTranscript(box, week, rerender, transcript) {
+  const parsed = parseLift(transcript);
+  if (!parsed) {
+    voiceFeedback(box, `Heard “${transcript}” — couldn't find the reps. Try “45 kg, 10 reps”.`);
+    return false;
+  }
+  box.querySelector(".kg").value = parsed.kg || "";
+  box.querySelector(".reps").value = parsed.reps;
+  const ex = box.dataset.ex;
+  logSet(box, week, rerender);
+  toast(`🎤 Logged ${parsed.kg > 0 ? `${parsed.kg} kg × ` : ""}${parsed.reps} reps — ${ex}`);
+  return true;
+}
+
+function startVoiceLog(box, week, rerender) {
+  const btn = box.querySelector(".micbtn");
+  const rec = new SpeechRec();
+  rec.lang = "en-IN";
+  rec.interimResults = false;
+  rec.maxAlternatives = 4;
+  btn.classList.add("listening");
+  btn.textContent = "🎙️";
+  voiceFeedback(box, "Listening… say e.g. “45 kg, 10 reps”");
+  let handled = false;
+  rec.onresult = (e) => {
+    handled = true;
+    const alts = [...e.results[0]].map((a) => a.transcript);
+    for (const alt of alts) if (applyVoiceTranscript(box, week, rerender, alt)) return;
+  };
+  rec.onerror = (e) => {
+    handled = true;
+    voiceFeedback(box, e.error === "not-allowed"
+      ? "Microphone blocked. Voice needs mic permission and an https:// or localhost address — it can't run from a file:// page."
+      : e.error === "no-speech" ? "Didn't hear anything — tap 🎤 and try again."
+      : `Voice error: ${e.error}. You can still type the set.`);
+  };
+  rec.onend = () => {
+    btn.classList.remove("listening");
+    btn.textContent = "🎤";
+    if (!handled) voiceFeedback(box, "Didn't catch that — tap 🎤 and try again.");
+  };
+  try { rec.start(); } catch { /* mic already active */ }
+}
+
+function toast(msg) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, 2600);
+}
+
 /* ================= Shared blocks ================= */
 
 // Last logged top set for an exercise + what to attempt next.
@@ -251,7 +360,9 @@ function workoutTable(workout, week, phase) {
                 <span>×</span>
                 <input type="number" class="reps" min="1" placeholder="reps" />
                 <button class="btn tiny logbtn" data-week="${week}">Log set</button>
+                ${VOICE_OK ? `<button class="btn tiny micbtn" title="Log this set by voice — say e.g. '45 kg, 10 reps'">🎤</button>` : ""}
               </div>
+              <div class="voice-feedback small"></div>
             </div>` : ""}
           </td>
           <td>${ex.sets}</td><td>${ex.reps}</td><td>${ex.rest}</td>
@@ -273,19 +384,22 @@ function mealsBlock(meals, kcalTarget) {
     </div>`;
 }
 
+function logSet(box, week, rerender) {
+  const kg = parseFloat(box.querySelector(".kg").value) || 0;
+  const reps = parseInt(box.querySelector(".reps").value, 10);
+  if (!reps) { box.querySelector(".reps").focus(); return; }
+  state.progress.lifts = state.progress.lifts || {};
+  const ex = box.dataset.ex;
+  (state.progress.lifts[ex] = state.progress.lifts[ex] || []).push({ week, kg, reps });
+  save(STORE.progress, state.progress);
+  rerender();
+}
+
 function wireLiftLogs(rerender) {
-  document.querySelectorAll(".liftlog .logbtn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const box = btn.closest(".liftlog");
-      const kg = parseFloat(box.querySelector(".kg").value) || 0;
-      const reps = parseInt(box.querySelector(".reps").value, 10);
-      if (!reps) { box.querySelector(".reps").focus(); return; }
-      state.progress.lifts = state.progress.lifts || {};
-      const ex = box.dataset.ex;
-      (state.progress.lifts[ex] = state.progress.lifts[ex] || []).push({ week: +btn.dataset.week, kg, reps });
-      save(STORE.progress, state.progress);
-      rerender();
-    });
+  document.querySelectorAll(".liftlog").forEach((box) => {
+    const week = +box.querySelector(".logbtn").dataset.week;
+    box.querySelector(".logbtn").addEventListener("click", () => logSet(box, week, rerender));
+    box.querySelector(".micbtn")?.addEventListener("click", () => startVoiceLog(box, week, rerender));
   });
 }
 
