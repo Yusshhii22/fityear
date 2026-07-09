@@ -297,6 +297,12 @@ footer.note { text-align: center; margin-top: 28px; }
   background: var(--accent-soft); border-radius: 99px; padding: 1px 7px;
   margin-left: 6px; white-space: nowrap; vertical-align: 1px;
 }
+.bonus-tag {
+  font-size: 0.625rem; font-weight: 700; color: var(--gold);
+  background: var(--gold-soft); border: 1px solid rgba(245, 185, 66, 0.4);
+  border-radius: 99px; padding: 1px 7px; margin-left: 6px;
+  white-space: nowrap; vertical-align: 1px;
+}
 
 .tmodal {
   position: fixed; inset: 0; z-index: 90;

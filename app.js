@@ -425,7 +425,7 @@ function workoutTable(workout, week, phase) {
       <tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Rest</th></tr>
       ${workout.exercises.map((ex) => `
         <tr>
-          <td><button class="exname" data-ex="${esc(ex.name)}" title="How to do this exercise"><strong>${ex.name}</strong><span class="howto">📖 how-to</span></button><div class="ex-note">${ex.note}</div>
+          <td><button class="exname" data-ex="${esc(ex.name)}" title="How to do this exercise"><strong>${ex.name}</strong><span class="howto">📖 how-to</span>${ex.bonus ? `<span class="bonus-tag">🏆 bonus</span>` : ""}</button><div class="ex-note">${ex.note}</div>
             ${ex.sets !== "—" ? `
             <div class="liftlog" data-ex="${esc(ex.name)}">
               <div class="lift-hint small">${liftHint(ex.name, phase)}</div>

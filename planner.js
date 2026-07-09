@@ -66,6 +66,30 @@ function buildWorkout(templateKey, week, equipment, experience) {
     }
     slotOffset += count;
   }
+
+  // Athlete bonus: one extra exercise from the day's primary muscle group,
+  // skipped on deload weeks and inserted ahead of any cardio finisher.
+  if (!ph.name.includes("Deload") && (EXPERIENCE[experience]?.extraEx || 0) > 0) {
+    const [category] = tpl.slots.find(([cat]) => cat !== "cardio") || [];
+    if (category) {
+      const used = new Set(exercises.map((e) => e.name));
+      const candidate = EXERCISES[equipment][category].find(([n]) => !used.has(n));
+      if (candidate) {
+        const [name, note] = candidate;
+        const isHold = /plank|hold|wall sit|walk/i.test(name);
+        const bonus = {
+          name, note, bonus: true,
+          sets: `${sets} sets`,
+          reps: isHold ? "hold" : `${ph.reps} reps`,
+          rest: ph.rest,
+        };
+        const cardioIdx = exercises.findIndex((e) => e.sets === "—");
+        if (cardioIdx === -1) exercises.push(bonus);
+        else exercises.splice(cardioIdx, 0, bonus);
+      }
+    }
+  }
+
   return { label: tpl.label, exercises, warmup: "5 min warm-up: light cardio + arm/leg swings", cooldown: "5 min cool-down: stretch what you trained" };
 }
 
