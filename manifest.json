@@ -4,8 +4,8 @@
   "description": "Your automated 52-week fitness journey: workouts, meals and schedules that adapt to your progress.",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#0f1420",
-  "theme_color": "#4f6df5",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
