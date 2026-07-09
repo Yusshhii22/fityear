@@ -13,6 +13,7 @@
 ## Features
 
 - **52-week periodized program** — Foundation → Build → Strength → Peak phases with deload weeks, matched to your equipment (none / home / gym) and 2–6 training days per week
+- **Exercise tutorials** — tap any exercise for step-by-step instructions with animated demo photos (courtesy of the public-domain [free-exercise-db](https://github.com/yuhonas/free-exercise-db)) and video links
 - **Meals with gram portions** — 60 Indian-friendly meals (veg / non-veg / vegan) computed from an ingredient database and scaled to your calorie & protein targets
 - **Weekly grocery lists** — checkable in-app and printable
 - **Voice set logging** — tap 🎤 and say "3 sets of 10 at 45 kg"
