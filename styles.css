@@ -1,6 +1,14 @@
 /* ===== FitYear styles — premium dark + gamified ===== */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Self-hosted variable font (weights 200–800) so offline/PWA use keeps it */
+@font-face {
+  font-family: "Manrope";
+  src: url("fonts/manrope.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
 :root {
   --bg: #070b14;
   --bg-glow: radial-gradient(1000px 500px at 50% -10%, rgba(94, 84, 255, 0.16), transparent 60%);
@@ -27,13 +35,16 @@
    sizes are rem so the whole type ramp adapts together. */
 html { color-scheme: dark; font-size: clamp(14.25px, 13px + 0.42vw, 17.5px); }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 500;
   background: var(--bg);
   background-image: var(--bg-glow);
   background-attachment: fixed;
   color: var(--text);
   line-height: 1.55;
 }
+h1, h2, h3, strong, .btn { font-weight: 800; }
+input, select, button { font-family: inherit; }
 #app { max-width: 880px; margin: 0 auto; padding: 24px 16px 96px; }
 
 h1 { font-size: 1.625rem; letter-spacing: -0.02em; }
@@ -93,13 +104,20 @@ input, select {
 }
 input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-.choice-row { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Options wrap as an even grid: cells share the row, text wraps inside the
+   border, nothing overflows — fluid at every width. */
+.choice-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
 .choice {
-  flex: 1; min-width: 90px; text-align: center; cursor: pointer;
-  border: 1px solid var(--line); border-radius: 12px; padding: 10px 8px;
-  font-size: 0.875rem; background: var(--bg); user-select: none;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  min-height: 52px; text-align: center; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 12px; padding: 9px 8px;
+  font-size: 0.875rem; font-weight: 800; line-height: 1.3;
+  background: var(--bg); user-select: none; overflow-wrap: break-word; min-width: 0;
 }
-.choice.selected { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; box-shadow: var(--glow); }
+.choice .csub { font-size: 0.6875rem; font-weight: 500; color: var(--muted); }
+/* numeric-only rows (days/week) fit on one line */
+.choice-row[data-name="days"] { grid-template-columns: repeat(auto-fit, minmax(48px, 1fr)); }
+.choice.selected { border-color: var(--accent); background: var(--accent-soft); box-shadow: var(--glow); }
 
 .btn {
   display: inline-block; border: none; cursor: pointer;

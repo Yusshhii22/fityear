@@ -144,18 +144,18 @@ function renderOnboarding() {
 
         <div class="field full"><span class="flabel">Main goal</span>
           <div class="choice-row" data-name="goal">
-            <div class="choice" data-val="lose">🔥 Lose fat</div>
-            <div class="choice" data-val="gain">💪 Build muscle</div>
-            <div class="choice" data-val="maintain">⚖️ Get fit & maintain</div>
+            <div class="choice" data-val="lose">Lose fat</div>
+            <div class="choice" data-val="gain">Build muscle</div>
+            <div class="choice" data-val="maintain">Get fit &amp; maintain</div>
           </div></div>
 
         <div class="field full"><span class="flabel">Training experience</span>
           <div class="choice-row" data-name="experience">
-            <div class="choice" data-val="newbie">🌱 Newbie<br /><span class="small muted">never trained</span></div>
-            <div class="choice" data-val="beginner">🙂 Beginner<br /><span class="small muted">&lt; 1 year</span></div>
-            <div class="choice" data-val="intermediate">💪 Intermediate<br /><span class="small muted">1–3 years</span></div>
-            <div class="choice" data-val="advanced">🔥 Advanced<br /><span class="small muted">3–5 years</span></div>
-            <div class="choice" data-val="athlete">🏆 Athlete<br /><span class="small muted">5+ years</span></div>
+            <div class="choice" data-val="newbie">Newbie<span class="csub">never trained</span></div>
+            <div class="choice" data-val="beginner">Beginner<span class="csub">&lt; 1 year</span></div>
+            <div class="choice" data-val="intermediate">Intermediate<span class="csub">1–3 years</span></div>
+            <div class="choice" data-val="advanced">Advanced<span class="csub">3–5 years</span></div>
+            <div class="choice" data-val="athlete">Athlete<span class="csub">5+ years</span></div>
           </div></div>
 
         <div class="field full"><span class="flabel">Daily activity outside workouts</span>
@@ -177,16 +177,16 @@ function renderOnboarding() {
 
         <div class="field full"><span class="flabel">Equipment available</span>
           <div class="choice-row" data-name="equipment">
-            <div class="choice" data-val="none">🏠 None (bodyweight)</div>
-            <div class="choice" data-val="home">🏋️ Dumbbells/bands at home</div>
-            <div class="choice" data-val="gym">🏢 Full gym</div>
+            <div class="choice" data-val="none">None<span class="csub">bodyweight only</span></div>
+            <div class="choice" data-val="home">Home<span class="csub">dumbbells / bands</span></div>
+            <div class="choice" data-val="gym">Full gym</div>
           </div></div>
 
         <div class="field full"><span class="flabel">Diet preference</span>
           <div class="choice-row" data-name="diet">
-            <div class="choice" data-val="veg">🥦 Vegetarian</div>
-            <div class="choice" data-val="nonveg">🍗 Non-vegetarian</div>
-            <div class="choice" data-val="vegan">🌱 Vegan</div>
+            <div class="choice" data-val="veg">Vegetarian</div>
+            <div class="choice" data-val="nonveg">Non-vegetarian</div>
+            <div class="choice" data-val="vegan">Vegan</div>
           </div></div>
 
         <div class="full"><button type="submit" class="btn">Generate my 1-year plan →</button></div>

@@ -1,8 +1,8 @@
 // FitYear service worker — cache-first so the app works fully offline.
-const CACHE = "fityear-v9";
+const CACHE = "fityear-v11";
 const ASSETS = [
   "./", "index.html", "styles.css", "data.js", "tutorials.js", "planner.js", "app.js",
-  "manifest.json", "icon.svg", "icon-192.png", "icon-512.png",
+  "manifest.json", "icon.svg", "icon-192.png", "icon-512.png", "fonts/manrope.woff2",
 ];
 // Tutorial photos in media/ are cached on first view by the fetch handler below.
 
