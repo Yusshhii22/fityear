@@ -39,9 +39,17 @@ function pickExercises(category, count, equipment, week, slotOffset) {
   return out;
 }
 
-function buildWorkout(templateKey, week, equipment) {
+// Set volume for the user's level: deloads stay light, everything else shifts by setAdj.
+function effectiveSets(ph, experience) {
+  if (ph.name.includes("Deload")) return ph.sets;
+  const adj = EXPERIENCE[experience]?.setAdj || 0;
+  return Math.max(2, Math.min(5, ph.sets + adj));
+}
+
+function buildWorkout(templateKey, week, equipment, experience) {
   const tpl = DAY_TEMPLATES[templateKey];
   const ph = phaseForWeek(week);
+  const sets = effectiveSets(ph, experience);
   const exercises = [];
   let slotOffset = 0;
   for (const [category, count] of tpl.slots) {
@@ -51,7 +59,7 @@ function buildWorkout(templateKey, week, equipment) {
       exercises.push({
         name,
         note,
-        sets: isCardio ? "—" : `${ph.sets} sets`,
+        sets: isCardio ? "—" : `${sets} sets`,
         reps: isCardio ? note : isHold ? "hold" : `${ph.reps} reps`,
         rest: isCardio ? "—" : ph.rest,
       });
@@ -146,7 +154,7 @@ function buildWeek(profile, targets, week) {
       dayName: DAY_NAMES[d],
       dayIdx: d,
       isTraining,
-      workout: isTraining ? buildWorkout(split[trainIdx], week, profile.equipment) : null,
+      workout: isTraining ? buildWorkout(split[trainIdx], week, profile.equipment, profile.experience) : null,
       restNote: isTraining ? null : REST_DAY_ACTIVITIES[(week + d) % REST_DAY_ACTIVITIES.length],
       meals: buildMealsForDay(profile.diet, targets, week, d),
     });

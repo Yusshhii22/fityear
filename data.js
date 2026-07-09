@@ -66,6 +66,16 @@ const DAY_PLACEMENT = {
   6: [0, 1, 2, 3, 4, 5],
 };
 
+// Training experience levels. setAdj shifts per-exercise set volume
+// (clamped 2–5, never applied on deload weeks); note is level-specific coaching.
+const EXPERIENCE = {
+  newbie:       { label: "Newbie",       setAdj: -1, note: "Form first: stop 3–4 reps short of failure, and open the 📖 how-to before every new exercise." },
+  beginner:     { label: "Beginner",     setAdj: 0,  note: "Stop 2–3 reps short of failure. Add weight only when every rep of every set feels clean." },
+  intermediate: { label: "Intermediate", setAdj: 0,  note: "Programmed as written — push the last set of each exercise close to failure." },
+  advanced:     { label: "Advanced",     setAdj: 1,  note: "Extra volume included for your level. Take the last set of each exercise near failure." },
+  athlete:      { label: "Athlete",      setAdj: 1,  note: "Extra volume included. On the final set of big lifts add a technique: pause reps, a drop set, or rest-pause." },
+};
+
 // 52-week periodization. Each phase: sets/reps scheme + focus note.
 const PHASES = [
   { from: 1,  to: 4,  name: "Foundation",       sets: 2, reps: "12–15", rest: "60s",  intensity: "Easy–moderate (RPE 6)", focus: "Learn every movement with perfect form. Weights stay light — consistency is the only goal this month." },

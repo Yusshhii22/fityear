@@ -16,6 +16,12 @@ function load(key) {
 }
 function save(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
+// Profiles created before the experience level existed default to beginner.
+if (state.profile && !state.profile.experience) {
+  state.profile.experience = "beginner";
+  save(STORE.profile, state.profile);
+}
+
 const $app = document.getElementById("app");
 
 function getTargets() {
@@ -143,6 +149,15 @@ function renderOnboarding() {
             <div class="choice" data-val="maintain">⚖️ Get fit & maintain</div>
           </div></div>
 
+        <div class="field full"><span class="flabel">Training experience</span>
+          <div class="choice-row" data-name="experience">
+            <div class="choice" data-val="newbie">🌱 Newbie<br /><span class="small muted">never trained</span></div>
+            <div class="choice" data-val="beginner">🙂 Beginner<br /><span class="small muted">&lt; 1 year</span></div>
+            <div class="choice" data-val="intermediate">💪 Intermediate<br /><span class="small muted">1–3 years</span></div>
+            <div class="choice" data-val="advanced">🔥 Advanced<br /><span class="small muted">3–5 years</span></div>
+            <div class="choice" data-val="athlete">🏆 Athlete<br /><span class="small muted">5+ years</span></div>
+          </div></div>
+
         <div class="field full"><span class="flabel">Daily activity outside workouts</span>
           <div class="choice-row" data-name="activity">
             <div class="choice" data-val="sedentary">Desk job, little walking</div>
@@ -207,6 +222,7 @@ function renderOnboarding() {
       weight: +f.weight.value,
       sex: choices.sex,
       goal: choices.goal,
+      experience: choices.experience,
       activity: choices.activity,
       days: +choices.days,
       equipment: choices.equipment,
@@ -486,7 +502,7 @@ function renderToday() {
       <div class="th-top">
         <div>
           <div class="th-day">Day ${t.dayNum} <span class="of">/ 365</span></div>
-          <div class="muted">Hi ${esc(p.name)} · Week ${t.week} · ${ph.name}</div>
+          <div class="muted">Hi ${esc(p.name)} · Week ${t.week} · ${ph.name} · ${EXPERIENCE[p.experience].label}</div>
         </div>
         <div class="th-gam">
           <div class="flame ${st.current > 0 ? "lit" : ""}">🔥 ${st.current}</div>
@@ -494,7 +510,9 @@ function renderToday() {
           <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
         </div>
       </div>
-      <div class="phase-chip">${ph.intensity} — ${ph.focus}</div>
+      <div class="phase-chip">${ph.intensity} — ${ph.focus}
+        <div class="small mt4">🎯 ${EXPERIENCE[p.experience].note}</div>
+      </div>
     </div>
 
     <div class="card day-focus">
@@ -536,6 +554,7 @@ function renderPlan() {
     <div class="phase-banner">
       <span class="name">Week ${week} · ${ph.name}</span> — ${ph.intensity}
       <div class="small mt4">${ph.focus}</div>
+      <div class="small mt4">🎯 ${EXPERIENCE[p.experience].label}: ${EXPERIENCE[p.experience].note}</div>
     </div>
 
     <div class="weeknav">
