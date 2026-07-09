@@ -1,9 +1,10 @@
 // FitYear service worker — cache-first so the app works fully offline.
-const CACHE = "fityear-v5";
+const CACHE = "fityear-v6";
 const ASSETS = [
-  "./", "index.html", "styles.css", "data.js", "planner.js", "app.js",
+  "./", "index.html", "styles.css", "data.js", "tutorials.js", "planner.js", "app.js",
   "manifest.json", "icon.svg", "icon-192.png", "icon-512.png",
 ];
+// Tutorial photos in media/ are cached on first view by the fetch handler below.
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

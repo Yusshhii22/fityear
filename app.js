@@ -330,6 +330,64 @@ function toast(msg) {
   setTimeout(() => { el.classList.remove("show"); setTimeout(() => el.remove(), 300); }, 2600);
 }
 
+/* ================= Exercise tutorials ================= */
+
+function tutSlug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+let tutFlipTimer = null;
+
+function openTutorial(name) {
+  const t = TUTORIALS[name];
+  if (!t) return;
+  closeTutorial();
+  const s = tutSlug(name);
+  const yt = `https://www.youtube.com/results?search_query=${encodeURIComponent(name + " exercise proper form")}`;
+  const modal = document.createElement("div");
+  modal.className = "tmodal";
+  modal.id = "tmodal";
+  modal.innerHTML = `
+    <div class="tcard">
+      <button class="tclose" aria-label="Close">✕</button>
+      <h2>${esc(name)}</h2>
+      ${t.img ? `
+        <div class="tflip">
+          <img id="tflipImg" src="media/${s}-0.jpg" alt="${esc(name)} demonstration" />
+          <div class="tflip-label muted small">Demo animates between start & end position</div>
+        </div>` : ""}
+      ${t.note ? `<div class="tnote">💡 ${t.note}</div>` : ""}
+      <ol class="tsteps">${t.steps.map((step) => `<li>${step}</li>`).join("")}</ol>
+      <a class="btn secondary" target="_blank" rel="noopener" href="${yt}">▶ Watch video tutorials</a>
+    </div>`;
+  document.body.appendChild(modal);
+  if (t.img > 1) {
+    const img = modal.querySelector("#tflipImg");
+    new Image().src = `media/${s}-1.jpg`; // preload the second frame
+    let frame = 0;
+    tutFlipTimer = setInterval(() => {
+      frame = (frame + 1) % t.img;
+      img.src = `media/${s}-${frame}.jpg`;
+    }, 900);
+  }
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal || e.target.closest(".tclose")) closeTutorial();
+  });
+}
+
+function closeTutorial() {
+  clearInterval(tutFlipTimer);
+  tutFlipTimer = null;
+  document.getElementById("tmodal")?.remove();
+}
+
+// One delegated listener so tutorial links work in every tab without rewiring.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".exname");
+  if (b) openTutorial(b.dataset.ex);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeTutorial(); });
+
 /* ================= Shared blocks ================= */
 
 // Last logged top set for an exercise + what to attempt next.
@@ -351,7 +409,7 @@ function workoutTable(workout, week, phase) {
       <tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Rest</th></tr>
       ${workout.exercises.map((ex) => `
         <tr>
-          <td><strong>${ex.name}</strong><div class="ex-note">${ex.note}</div>
+          <td><button class="exname" data-ex="${esc(ex.name)}" title="How to do this exercise"><strong>${ex.name}</strong><span class="howto">📖 how-to</span></button><div class="ex-note">${ex.note}</div>
             ${ex.sets !== "—" ? `
             <div class="liftlog" data-ex="${esc(ex.name)}">
               <div class="lift-hint small">${liftHint(ex.name, phase)}</div>
