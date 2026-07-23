@@ -144,31 +144,31 @@ const WIZ_STEPS = [
     ["bro", "💪", "Gym bro / sis", "I'm here for my own fitness journey"]] },
   { id: "welcome", type: "name" },
   { id: "body", type: "body" },
-  { id: "goal", type: "choice", title: "What's your main goal?", sub: "Everything — workouts, calories, meals — is built around this.", opts: [
+  { id: "goal", type: "choice", title: "What's your main goal?", tt: "What's their main goal?", sub: "Everything — workouts, calories, meals — is built around this.", opts: [
     ["lose", "🔥", "Lose fat", "drop fat while keeping the muscle you have"],
     ["gain", "💪", "Build muscle", "add size and strength with a lean surplus"],
     ["maintain", "⚖️", "Get fit & maintain", "feel, move and perform better at this weight"]] },
-  { id: "experience", type: "choice", title: "Training experience?", sub: "Sets the right volume and coaching cues for your level.", opts: [
+  { id: "experience", type: "choice", title: "Training experience?", tt: "Their training experience?", sub: "Sets the right volume and coaching cues for your level.", ts: "Sets the right volume and coaching cues for their level.", opts: [
     ["newbie", "🌱", "Newbie", "never trained"],
     ["beginner", "🙂", "Beginner", "less than 1 year"],
     ["intermediate", "🏃", "Intermediate", "1–3 years"],
     ["advanced", "🏋️", "Advanced", "3–5 years"],
     ["athlete", "🏆", "Athlete", "5+ years"]] },
-  { id: "activity", type: "choice", title: "How active are your days?", sub: "Outside workouts — this tunes your calorie target.", opts: [
+  { id: "activity", type: "choice", title: "How active are your days?", tt: "How active are their days?", sub: "Outside workouts — this tunes your calorie target.", ts: "Outside workouts — this tunes their calorie target.", opts: [
     ["sedentary", "🪑", "Mostly sitting", "desk job, little walking"],
     ["light", "🚶", "Lightly active", "some walking daily"],
     ["moderate", "🧍", "On my feet a lot", "teaching, retail, errands"],
     ["very", "🔨", "Physically demanding", "manual work or sport"]] },
-  { id: "days", type: "choice", row: true, title: "Workout days per week?", sub: "Be honest — a plan you can stick to beats a perfect one you can't.", opts: [
+  { id: "days", type: "choice", row: true, title: "Workout days per week?", sub: "Be honest — a plan you can stick to beats a perfect one you can't.", ts: "A schedule they can stick to beats a perfect one they can't.", opts: [
     ["2", "", "2", "solid start"], ["3", "", "3", "sweet spot"], ["4", "", "4", "committed"], ["5", "", "5", "serious"], ["6", "", "6", "all in"]] },
-  { id: "equipment", type: "choice", title: "How do you like to train?", sub: "Every workout in your year is built from this style and gear.", opts: [
+  { id: "equipment", type: "choice", title: "How do you like to train?", tt: "How will they train?", sub: "Every workout in your year is built from this style and gear.", ts: "Every workout in their year is built from this style and gear.", opts: [
     ["none", "🧍", "Simple bodyweight", "no equipment at all"],
     ["home", "🏠", "Home setup", "dumbbells / bands"],
     ["gym", "🏢", "Full gym", "machines, barbells, the works"],
     ["calisthenics", "🤸", "Calisthenics", "pull-up & dip bars, or a park"],
     ["crossfit", "⚡", "CrossFit-style", "functional HIIT — a KB or barbell helps"],
     ["yoga", "🧘", "Yoga & Pilates", "mat-based strength, control & mobility"]] },
-  { id: "diet", type: "choice", title: "Diet preference?", sub: "Meal plans, protein targets and grocery lists follow this.", opts: [
+  { id: "diet", type: "choice", title: "Diet preference?", tt: "Their diet preference?", sub: "Meal plans, protein targets and grocery lists follow this.", opts: [
     ["veg", "🥦", "Vegetarian", ""],
     ["nonveg", "🍗", "Non-vegetarian", ""],
     ["vegan", "🌱", "Vegan", ""]] },
@@ -205,6 +205,7 @@ function renderOnboarding() {
   const editing = state.ui.editingProfile;
   const step = WIZ_STEPS[wiz.step];
   const pct = (wiz.step / (WIZ_STEPS.length - 1)) * 100;
+  const tr = wiz.data.role === "trainer"; // client-facing wording for trainers
 
   let body = "", footer = "";
   if (step.type === "name") {
@@ -213,16 +214,18 @@ function renderOnboarding() {
         <div class="logo">💪</div>
         <h1>${editing ? "Edit your profile" : "FitYear"}</h1>
         <p class="muted">${editing
-          ? "Change anything — your plan regenerates instantly and your progress is kept."
-          : "A 2-minute setup builds your complete 1-year fitness journey — 52 weeks of workouts, meals and coaching that adapt to you."}</p>
+          ? "Change anything — the plan regenerates instantly and progress is kept."
+          : tr
+            ? "Set up a 1-year program for your client — answer the next questions for them, not yourself. Workouts, meals and coaching all adapt to their answers."
+            : "A 2-minute setup builds your complete 1-year fitness journey — 52 weeks of workouts, meals and coaching that adapt to you."}</p>
       </div>
-      <label class="field"><span>What should we call you?</span>
-        <input id="wname" placeholder="Your name" value="${esc(wiz.data.name || "")}" autocomplete="given-name" /></label>`;
+      <label class="field"><span>${tr ? "Your client's name" : "What should we call you?"}</span>
+        <input id="wname" placeholder="${tr ? "Client's name" : "Your name"}" value="${esc(wiz.data.name || "")}" autocomplete="${tr ? "off" : "given-name"}" /></label>`;
     footer = `<button class="btn" id="wnext">${editing ? "Continue →" : "Let's go →"}</button>`;
   } else if (step.type === "body") {
     body = `
-      <h1>About you</h1>
-      <p class="sub muted">Used only to calculate your calorie and protein targets — everything stays on your device.</p>
+      <h1>${tr ? "About your client" : "About you"}</h1>
+      <p class="sub muted">${tr ? "Their numbers set the calorie and protein targets — all data stays on this device." : "Used only to calculate your calorie and protein targets — everything stays on your device."}</p>
       <div class="form-grid">
         <label class="field"><span>Age</span><input id="wage" type="number" min="14" max="80" value="${wiz.data.age ?? ""}" placeholder="e.g. 27" /></label>
         <label class="field"><span>Height (cm)</span><input id="wheight" type="number" min="120" max="230" value="${wiz.data.height ?? ""}" placeholder="e.g. 172" /></label>
@@ -235,10 +238,12 @@ function renderOnboarding() {
       </div>`;
     footer = `<button class="btn" id="wnext">Next →</button>`;
   } else if (step.type === "choice") {
+    const title = (tr && step.tt) || step.title;
+    const sub = (tr && step.ts) || step.sub;
     body = `
-      ${step.hero ? `<div class="hero"><div class="logo">💪</div><h1>FitYear</h1></div>` : `<h1>${step.title}</h1>`}
-      ${step.hero ? `<h1>${step.title}</h1>` : ""}
-      <p class="sub muted">${step.sub}</p>
+      ${step.hero ? `<div class="hero"><div class="logo">💪</div><h1>FitYear</h1></div>` : `<h1>${title}</h1>`}
+      ${step.hero ? `<h1>${title}</h1>` : ""}
+      <p class="sub muted">${sub}</p>
       <div class="wchoices ${step.row ? "row" : ""}">
         ${step.opts.map(([val, icon, label, sub]) => `
           <div class="wchoice ${String(wiz.data[step.id]) === val ? "selected" : ""}" data-val="${val}">
@@ -253,8 +258,8 @@ function renderOnboarding() {
     const t = calcTargets(draft);
     const split = [...new Set(SPLITS[draft.days].map((k) => DAY_TEMPLATES[k].label))];
     body = `
-      <h1>Your year is ready, ${esc(d.name)} 🎉</h1>
-      <p class="sub muted">Here's what we'll build from your answers:</p>
+      <h1>${tr ? `${esc(d.name)}'s year is ready 🎉` : `Your year is ready, ${esc(d.name)} 🎉`}</h1>
+      <p class="sub muted">${tr ? "Here's the program built from their answers:" : "Here's what we'll build from your answers:"}</p>
       <div class="stats">
         <div class="stat"><div class="val">${t.calories}</div><div class="lbl">kcal / day</div></div>
         <div class="stat"><div class="val">${t.protein} g</div><div class="lbl">protein / day</div></div>
@@ -268,7 +273,7 @@ function renderOnboarding() {
         <div class="sumchips mt4">${supplementStack(draft).map((s) => `<span class="sumchip">${s.icon} ${s.name}</span>`).join("")}</div>
         <h3 class="mt">📊 The journey</h3>
         <div class="muted small mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
-        ${d.role === "trainer" ? `<div class="tnote mt">🎓 Trainer mode: phase banners include the programming rationale (schemes, RPE, progression logic), and week sheets print clean for handing to clients.</div>` : ""}
+        ${d.role === "trainer" ? `<div class="tnote mt">🎓 Trainer mode: phase banners include the programming rationale, you can reorder days & exercises and edit sets/reps/rest in Plan → Week → ✏️ Customize, and week sheets print clean for clients.</div>` : ""}
       </div>`;
     footer = `<button class="btn gold" id="wfinish">${editing ? "Save & regenerate my plan →" : "Generate my 1-year plan →"}</button>`;
   }
@@ -528,17 +533,20 @@ function liftHint(exName, phase) {
   return `Last: <strong>${last.kg > 0 ? last.kg + " kg × " : ""}${last.reps} reps</strong> (wk ${last.week}) — ${suggestion}`;
 }
 
-function workoutTable(workout, week, phase) {
+function workoutTable(workout, week, phase, edit = false, dayIdx = null) {
+  const cell = (ex, field) => edit
+    ? `<input class="exedit" data-day="${dayIdx}" data-orig="${ex._i}" data-field="${field}" value="${esc(String(ex[field]))}" />`
+    : ex[field];
   return `
     <div class="muted small">🔸 ${workout.warmup}</div>
     <div class="table-wrap"><table class="exercises">
-      <tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Rest</th></tr>
-      ${workout.exercises.map((ex) => `
+      <tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Rest</th>${edit ? "<th></th>" : ""}</tr>
+      ${workout.exercises.map((ex, pos) => `
         <tr>
           <td>${TUTORIALS[ex.name]
             ? `<button class="exname" data-ex="${esc(ex.name)}" title="How to do this exercise"><strong>${ex.name}</strong><span class="howto">📖 how-to</span>${ex.bonus ? `<span class="bonus-tag">🏆 bonus</span>` : ""}</button>`
             : `<strong>${ex.name}</strong>${ex.bonus ? `<span class="bonus-tag">🏆 bonus</span>` : ""}`}<div class="ex-note">${ex.note}</div>
-            ${ex.sets !== "—" ? `
+            ${ex.sets !== "—" && !edit ? `
             <div class="liftlog" data-ex="${esc(ex.name)}">
               <div class="lift-hint small">${liftHint(ex.name, phase)}</div>
               <div class="lift-inputs">
@@ -551,7 +559,11 @@ function workoutTable(workout, week, phase) {
               <div class="voice-feedback small"></div>
             </div>` : ""}
           </td>
-          <td>${ex.sets}</td><td>${ex.reps}</td><td>${ex.rest}</td>
+          <td>${cell(ex, "sets")}</td><td>${cell(ex, "reps")}</td><td>${cell(ex, "rest")}</td>
+          ${edit ? `<td><span class="exmoves">
+            <button class="mvbtn" data-exmove="up" data-day="${dayIdx}" data-pos="${pos}" ${pos === 0 ? "disabled" : ""}>↑</button>
+            <button class="mvbtn" data-exmove="down" data-day="${dayIdx}" data-pos="${pos}" ${pos === workout.exercises.length - 1 ? "disabled" : ""}>↓</button>
+          </span></td>` : ""}
         </tr>`).join("")}
     </table></div>
     <div class="cooldown">
@@ -598,16 +610,45 @@ function setDayDone(key, done) {
   if (done) confetti();
 }
 
+/* ---- Trainer customizations ----
+   Per-week overrides stored in progress.custom["w{n}"]:
+   { order: [7 day indices], days: { [dayIdx]: { order: [ex indices], edits: { [exIdx]: {sets,reps,rest} } } } }
+   Applied on top of the generated plan so Today, Plan and prints all agree. */
+
+function weekCustom(week) {
+  state.progress.custom = state.progress.custom || {};
+  return (state.progress.custom[`w${week}`] = state.progress.custom[`w${week}`] || {});
+}
+
+function applyCustom(weekPlan, week) {
+  // Tag each exercise with its generated index (_i) — the stable identity edits key on.
+  const base = weekPlan.days.map((d) => d.isTraining
+    ? { ...d, workout: { ...d.workout, exercises: d.workout.exercises.map((ex, i) => ({ ...ex, _i: i })) } }
+    : d);
+  const c = (state.progress.custom || {})[`w${week}`];
+  if (!c) return { ...weekPlan, days: base };
+  let days = c.order ? c.order.map((orig, pos) => ({ ...base[orig], dayName: DAY_NAMES[pos] })) : base;
+  days = days.map((d) => {
+    const dc = (c.days || {})[d.dayIdx];
+    if (!dc || !d.isTraining) return d;
+    let exs = d.workout.exercises;
+    if (dc.order) exs = dc.order.map((i) => exs.find((e) => e._i === i)).filter(Boolean);
+    if (dc.edits) exs = exs.map((ex) => (dc.edits[ex._i] ? { ...ex, ...dc.edits[ex._i] } : ex));
+    return { ...d, workout: { ...d.workout, exercises: exs } };
+  });
+  return { ...weekPlan, days };
+}
+
 /* ================= Today tab ================= */
 
 function renderToday() {
   const p = state.profile;
   const t = todayInfo();
   const targets = getTargets();
-  const weekPlan = buildWeek(p, targets, t.week);
-  const day = weekPlan.days[t.dayIdx];
+  const weekPlan = applyCustom(buildWeek(p, targets, t.week), t.week);
+  const day = weekPlan.days[t.dayIdx]; // position = today's weekday; content may be reordered by a trainer
   const ph = weekPlan.phase;
-  const key = `w${t.week}d${t.dayIdx}`;
+  const key = `w${t.week}d${day.dayIdx}`;
   const done = !!state.progress.completed[key];
   const x = xpStats();
   const st = streaks();
@@ -617,7 +658,7 @@ function renderToday() {
       <div class="th-top">
         <div>
           <div class="th-day">Day ${t.dayNum} <span class="of">/ 365</span></div>
-          <div class="muted">Hi ${esc(p.name)} · Week ${t.week} · ${ph.name} · ${EXPERIENCE[p.experience].label}</div>
+          <div class="muted">${p.role === "trainer" ? `👤 Client: ${esc(p.name)}` : `Hi ${esc(p.name)}`} · Week ${t.week} · ${ph.name} · ${EXPERIENCE[p.experience].label}</div>
         </div>
         <div class="th-right">
           <div class="th-gam">
@@ -644,7 +685,7 @@ function renderToday() {
     </div>
 
     <div class="card">${mealsBlock(day.meals, targets.calories)}</div>
-    ${suppCard(t.week, t.dayIdx, day.isTraining)}
+    ${suppCard(t.week, day.dayIdx, day.isTraining)}
     <footer class="note muted small">${HYDRATION_TIP}</footer>`;
 
   document.getElementById("doneBtn").addEventListener("click", () => {
@@ -703,7 +744,8 @@ function renderPlan() {
   const targets = getTargets();
   const week = state.progress.currentWeek;
   const page = state.ui.planPage;
-  const weekPlan = buildWeek(p, targets, week);
+  const edit = state.ui.editWeek && p.role === "trainer";
+  const weekPlan = applyCustom(buildWeek(p, targets, week), week);
   const ph = weekPlan.phase;
 
   const weekOptions = Array.from({ length: 52 }, (_, i) => {
@@ -726,8 +768,14 @@ function renderPlan() {
         <div class="small mt4">🎯 ${EXPERIENCE[p.experience].label}: ${EXPERIENCE[p.experience].note}</div>
         ${p.role === "trainer" ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
       </div>
+      ${p.role === "trainer" ? `
+      <div class="editbar">
+        <button class="btn secondary" id="editWeekBtn">${edit ? "✓ Done customizing" : "✏️ Customize week"}</button>
+        ${edit ? `<button class="btn secondary" id="resetWeekBtn">↺ Reset week</button>
+        <span class="muted small">Move days & exercises with ↑↓, type into sets / reps / rest. Applies to week ${week} only.</span>` : ""}
+      </div>` : ""}
       ${weeknav}
-      ${weekPlan.days.map((d) => dayCard(d, week, targets, ph)).join("")}
+      ${weekPlan.days.map((d, pos) => dayCard(d, week, targets, ph, edit, pos)).join("")}
       <button class="btn secondary" id="printBtn">🖨️ Print week sheet</button>`,
     grocery: () => `
       ${weeknav}
@@ -789,6 +837,60 @@ function renderPlan() {
     });
 
     wireLiftLogs(rerenderInPlace);
+
+    /* -- trainer customization wiring -- */
+    document.getElementById("editWeekBtn")?.addEventListener("click", () => {
+      state.ui.editWeek = !state.ui.editWeek;
+      renderPlan();
+    });
+    document.getElementById("resetWeekBtn")?.addEventListener("click", () => {
+      if (!confirm(`Remove all customizations for week ${week}?`)) return;
+      delete (state.progress.custom || {})[`w${week}`];
+      save(STORE.progress, state.progress);
+      renderPlan();
+    });
+    document.querySelectorAll("[data-daymove]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation(); // keep the day card from toggling open
+        const pos = +b.dataset.pos;
+        const to = pos + (b.dataset.daymove === "up" ? -1 : 1);
+        if (to < 0 || to > 6) return;
+        const c = weekCustom(week);
+        c.order = c.order || [0, 1, 2, 3, 4, 5, 6];
+        [c.order[pos], c.order[to]] = [c.order[to], c.order[pos]];
+        save(STORE.progress, state.progress);
+        rerenderInPlace();
+      }));
+    document.querySelectorAll("[data-exmove]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const dayIdx = +b.dataset.day;
+        const pos = +b.dataset.pos;
+        const to = pos + (b.dataset.exmove === "up" ? -1 : 1);
+        const day = weekPlan.days.find((d) => d.dayIdx === dayIdx);
+        const c = weekCustom(week);
+        c.days = c.days || {};
+        const dc = (c.days[dayIdx] = c.days[dayIdx] || {});
+        dc.order = dc.order || day.workout.exercises.map((ex) => ex._i);
+        if (to < 0 || to >= dc.order.length) return;
+        [dc.order[pos], dc.order[to]] = [dc.order[to], dc.order[pos]];
+        save(STORE.progress, state.progress);
+        rerenderInPlace();
+      }));
+    document.querySelectorAll(".exedit").forEach((inp) =>
+      inp.addEventListener("change", () => {
+        const c = weekCustom(week);
+        c.days = c.days || {};
+        const dc = (c.days[+inp.dataset.day] = c.days[+inp.dataset.day] || {});
+        dc.edits = dc.edits || {};
+        (dc.edits[+inp.dataset.orig] = dc.edits[+inp.dataset.orig] || {})[inp.dataset.field] = inp.value.trim();
+        save(STORE.progress, state.progress);
+      }));
+    document.querySelectorAll("[data-resetday]").forEach((b) =>
+      b.addEventListener("click", () => {
+        delete ((state.progress.custom || {})[`w${week}`]?.days || {})[+b.dataset.resetday];
+        save(STORE.progress, state.progress);
+        rerenderInPlace();
+      }));
   }
 
   if (page === "grocery") wireGrocery(week, targets);
@@ -825,7 +927,7 @@ function suppGuide() {
     <footer class="note muted small">General guidance, not medical advice. Check with a doctor first if you take medication, are pregnant, or have a health condition.</footer>`;
 }
 
-function dayCard(d, week, targets, phase) {
+function dayCard(d, week, targets, phase, edit = false, pos = 0) {
   const key = `w${week}d${d.dayIdx}`;
   const done = !!state.progress.completed[key];
   const tag = done
@@ -838,10 +940,14 @@ function dayCard(d, week, targets, phase) {
     <div class="card day-card" id="card-${key}">
       <div class="day-head" data-key="${key}">
         <div><div class="title">${d.dayName}</div><div class="sub">${d.isTraining ? d.workout.label : "Recovery day"}</div></div>
-        ${tag}
+        ${edit ? `<span class="daymoves">
+          <button class="mvbtn" data-daymove="up" data-pos="${pos}" ${pos === 0 ? "disabled" : ""}>↑</button>
+          <button class="mvbtn" data-daymove="down" data-pos="${pos}" ${pos === 6 ? "disabled" : ""}>↓</button>
+        </span>` : tag}
       </div>
       <div class="day-body">
-        ${d.isTraining ? workoutTable(d.workout, week, phase) : `<div class="restnote">${d.restNote}</div>`}
+        ${d.isTraining ? workoutTable(d.workout, week, phase, edit, d.dayIdx) : `<div class="restnote">${d.restNote}</div>`}
+        ${edit && d.isTraining ? `<button class="btn tiny ghost" data-resetday="${d.dayIdx}">↺ Reset this day's exercises</button>` : ""}
         ${mealsBlock(d.meals, targets.calories)}
         <div class="done-row">
           <input type="checkbox" id="chk-${key}" data-key="${key}" ${done ? "checked" : ""} />
@@ -1115,7 +1221,7 @@ function liftChart(exName) {
 function printWeek(week) {
   const p = state.profile;
   const targets = getTargets();
-  const plan = buildWeek(p, targets, week);
+  const plan = applyCustom(buildWeek(p, targets, week), week);
   const ph = plan.phase;
   document.getElementById("printview").innerHTML = `
     <div class="phead">

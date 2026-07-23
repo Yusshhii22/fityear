@@ -13,6 +13,7 @@
 ## Features
 
 - **Step-by-step onboarding** — a one-question-per-screen wizard that ends with a personalized plan preview
+- **Trainer or self-guided** — trainers set up the plan for a client (all questions ask about the client) and can reorder days & exercises and edit sets/reps/rest per week; everyone else gets plain-English coaching
 - **52-week periodized program** — Foundation → Build → Strength → Peak phases with deload weeks, matched to your training style (bodyweight / home / gym / calisthenics / CrossFit-style / yoga & pilates) and 2–6 training days per week
 - **Targeted cool-downs** — every workout ends with stretches matched to the muscle groups trained that day
 - **Supplement guidance** — a stack personalized to your goal and diet with doses and best timing: daily checklist on Today, full why-and-how guide in Plan

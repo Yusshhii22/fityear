@@ -365,6 +365,19 @@ footer.note { text-align: center; margin-top: 28px; }
   100% { transform: translate(var(--dx, 0px), -46vh) scale(1.15) rotate(20deg); opacity: 0; }
 }
 
+/* ---- Trainer week customization ---- */
+.editbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.mvbtn {
+  width: 30px; height: 30px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--muted);
+  font-size: 0.875rem; font-weight: 700;
+}
+.mvbtn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.mvbtn:disabled { opacity: 0.3; cursor: default; }
+.daymoves { display: flex; gap: 5px; }
+.exmoves { display: flex; flex-direction: column; gap: 4px; }
+input.exedit { width: 58px; padding: 4px 6px; font-size: max(16px, 0.75rem); }
+
 /* ---- Cool-down stretches ---- */
 .cooldown { margin-top: 8px; }
 .cdlist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
