@@ -1,5 +1,5 @@
-// FitYear service worker — cache-first so the app works fully offline.
-const CACHE = "fityear-v11";
+﻿// FitYear service worker â€” cache-first so the app works fully offline.
+const CACHE = "fityear-v13";
 const ASSETS = [
   "./", "index.html", "styles.css", "data.js", "tutorials.js", "planner.js", "app.js",
   "manifest.json", "icon.svg", "icon-192.png", "icon-512.png", "fonts/manrope.woff2",
