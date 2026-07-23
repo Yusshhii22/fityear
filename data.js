@@ -245,6 +245,52 @@ const MEALS = {
   },
 };
 
+// ===== Supplements =====
+// Evidence-based options only. goals/diets filter who sees an item (absent = everyone);
+// trainOnly items are skipped on rest days; optional items are nice-to-have extras.
+const SUPP_SLOTS = {
+  morning: { icon: "🌅", short: "Morning",      label: "Morning, with breakfast" },
+  pre:     { icon: "⚡", short: "Pre-workout",  label: "30–45 min before training" },
+  post:    { icon: "💪", short: "Post-workout", label: "Within ~2 h after training" },
+  meal:    { icon: "🍽️", short: "With meals",   label: "With lunch or dinner" },
+  anytime: { icon: "⏰", short: "Anytime",      label: "Any time — daily consistency beats timing" },
+};
+
+const SUPPLEMENTS = [
+  { id: "whey", icon: "🥤", name: "Whey protein", diets: ["veg", "nonveg"],
+    dose: "1 scoop (25–30 g) in water or milk", slot: "post",
+    why: "The cheapest, easiest way to hit your daily protein target — the single biggest nutrition lever for building and keeping muscle. It's just filtered milk protein, not a steroid.",
+    tip: "Only needed on days food alone won't reach your protein target." },
+  { id: "plantprotein", icon: "🥤", name: "Plant protein", diets: ["vegan"],
+    dose: "1 scoop (30 g) in water or almond milk", slot: "post",
+    why: "Hitting protein targets on a vegan diet is the hardest part — a pea/rice blend closes the gap without hundreds of extra calories.",
+    tip: "Pick a blend (pea + rice) for a complete amino acid profile." },
+  { id: "creatine", icon: "💥", name: "Creatine monohydrate",
+    dose: "3–5 g daily — every day, including rest days", slot: "anytime",
+    why: "The most-researched supplement in sports science: a small but real boost to strength, power and muscle growth over months. It works by saturation, so daily consistency matters more than timing.",
+    tip: "Plain monohydrate is all you need — skip the fancy blends. Drink plenty of water." },
+  { id: "vitd", icon: "☀️", name: "Vitamin D3",
+    dose: "1000–2000 IU", slot: "morning",
+    why: "Most people who work indoors run low, and low vitamin D drags down energy, bone health, mood and recovery. Take it with a meal that contains some fat for absorption." },
+  { id: "fishoil", icon: "🐟", name: "Omega-3 fish oil", diets: ["nonveg"],
+    dose: "1–2 capsules (~1 g EPA+DHA)", slot: "meal",
+    why: "Supports heart, joint and brain health, and may reduce post-training soreness.",
+    tip: "Already eat fatty fish twice a week? You can skip this one." },
+  { id: "algae", icon: "🌊", name: "Algae omega-3 (EPA/DHA)", diets: ["veg", "vegan"],
+    dose: "1–2 capsules (~500 mg EPA+DHA)", slot: "meal",
+    why: "The plant-based source of the same EPA/DHA found in fish oil — flaxseed alone converts poorly, so algae oil is the reliable vegetarian option." },
+  { id: "b12", icon: "🧬", name: "Vitamin B12", diets: ["vegan"],
+    dose: "500–1000 mcg, 3–4× per week", slot: "morning",
+    why: "B12 comes almost entirely from animal foods — on a fully vegan diet supplementing isn't optional, it's essential for nerves and energy." },
+  { id: "caffeine", icon: "☕", name: "Caffeine (coffee or pre-workout)", trainOnly: true, optional: true,
+    dose: "1 strong coffee or 100–200 mg", slot: "pre",
+    why: "The most reliable legal performance booster — sharper focus and a rep or two more in the tank.",
+    tip: "Skip it within 8 hours of bedtime — sleep beats any supplement." },
+  { id: "multi", icon: "💊", name: "Multivitamin", goals: ["lose"], optional: true,
+    dose: "1 tablet", slot: "morning",
+    why: "Cheap insurance while eating in a calorie deficit, where micronutrients can slip through the cracks." },
+];
+
 const GROCERY_CATS = { produce: "🥬 Produce", grains: "🌾 Grains & Bread", protein: "🍗 Protein & Legumes", dairy: "🥛 Dairy", pantry: "🫙 Pantry" };
 
 const HYDRATION_TIP = "Drink 3–4 L water through the day. Have protein within ~2 hours after training.";

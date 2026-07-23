@@ -8,7 +8,7 @@ const STORE = {
 const state = {
   profile: load(STORE.profile),
   progress: load(STORE.progress) || { completed: {}, weights: {}, currentWeek: 1 },
-  ui: { tab: "today", chartEx: null },
+  ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
 };
 
 function load(key) {
@@ -102,8 +102,10 @@ function todayInfo() {
 /* ================= Render root ================= */
 
 function render() {
-  if (!state.profile) { renderOnboarding(); return; }
+  if (!state.profile || state.ui.editingProfile) { renderOnboarding(); return; }
   const tab = state.ui.tab;
+  const animate = state.ui.lastTab !== tab;
+  state.ui.lastTab = tab;
   $app.innerHTML = `
     <div id="view"></div>
     <nav class="tabbar">
@@ -115,126 +117,217 @@ function render() {
   if (tab === "today") renderToday();
   else if (tab === "plan") renderPlan();
   else renderProgress();
+  if (animate) animateView();
 }
 
 const $view = () => document.getElementById("view");
 
-/* ================= Onboarding ================= */
+// Replay the page-in animation on #view (used when switching tabs/sub-pages).
+function animateView() {
+  const v = $view();
+  if (!v) return;
+  v.classList.remove("anim");
+  void v.offsetWidth;
+  v.classList.add("anim");
+}
+
+/* ================= Onboarding wizard ================= */
+
+const WIZ_STEPS = [
+  { id: "welcome", type: "name" },
+  { id: "body", type: "body" },
+  { id: "goal", type: "choice", title: "What's your main goal?", sub: "Everything — workouts, calories, meals — is built around this.", opts: [
+    ["lose", "🔥", "Lose fat", "drop fat while keeping the muscle you have"],
+    ["gain", "💪", "Build muscle", "add size and strength with a lean surplus"],
+    ["maintain", "⚖️", "Get fit & maintain", "feel, move and perform better at this weight"]] },
+  { id: "experience", type: "choice", title: "Training experience?", sub: "Sets the right volume and coaching cues for your level.", opts: [
+    ["newbie", "🌱", "Newbie", "never trained"],
+    ["beginner", "🙂", "Beginner", "less than 1 year"],
+    ["intermediate", "🏃", "Intermediate", "1–3 years"],
+    ["advanced", "🏋️", "Advanced", "3–5 years"],
+    ["athlete", "🏆", "Athlete", "5+ years"]] },
+  { id: "activity", type: "choice", title: "How active are your days?", sub: "Outside workouts — this tunes your calorie target.", opts: [
+    ["sedentary", "🪑", "Mostly sitting", "desk job, little walking"],
+    ["light", "🚶", "Lightly active", "some walking daily"],
+    ["moderate", "🧍", "On my feet a lot", "teaching, retail, errands"],
+    ["very", "🔨", "Physically demanding", "manual work or sport"]] },
+  { id: "days", type: "choice", row: true, title: "Workout days per week?", sub: "Be honest — a plan you can stick to beats a perfect one you can't.", opts: [
+    ["2", "", "2", "solid start"], ["3", "", "3", "sweet spot"], ["4", "", "4", "committed"], ["5", "", "5", "serious"], ["6", "", "6", "all in"]] },
+  { id: "equipment", type: "choice", title: "What equipment do you have?", sub: "Every workout is matched to what's actually available to you.", opts: [
+    ["none", "🧘", "No equipment", "bodyweight only"],
+    ["home", "🏠", "Home setup", "dumbbells / bands"],
+    ["gym", "🏢", "Full gym", "machines, barbells, the works"]] },
+  { id: "diet", type: "choice", title: "Diet preference?", sub: "Meal plans, protein targets and grocery lists follow this.", opts: [
+    ["veg", "🥦", "Vegetarian", ""],
+    ["nonveg", "🍗", "Non-vegetarian", ""],
+    ["vegan", "🌱", "Vegan", ""]] },
+  { id: "summary", type: "summary" },
+];
+
+let wiz = null;
+
+function profileFromWizard(d) {
+  return {
+    name: d.name, age: +d.age, height: +d.height, weight: +d.weight, sex: d.sex,
+    goal: d.goal, experience: d.experience, activity: d.activity, days: +d.days,
+    equipment: d.equipment, diet: d.diet,
+    startDate: (state.ui.editingProfile && state.profile?.startDate) || new Date().toISOString().slice(0, 10),
+  };
+}
+
+function finishOnboarding() {
+  const editing = state.ui.editingProfile;
+  state.profile = profileFromWizard(wiz.data);
+  if (!editing) state.progress = { completed: {}, weights: { 1: state.profile.weight }, currentWeek: 1 };
+  save(STORE.profile, state.profile);
+  save(STORE.progress, state.progress);
+  state.ui.editingProfile = false;
+  wiz = null;
+  render();
+  window.scrollTo(0, 0);
+  if (!state.progress.tourDone) setTimeout(startTour, 500);
+}
 
 function renderOnboarding() {
+  if (!wiz) wiz = { step: 0, data: state.ui.editingProfile ? { ...state.profile } : {} };
+  const editing = state.ui.editingProfile;
+  const step = WIZ_STEPS[wiz.step];
+  const pct = (wiz.step / (WIZ_STEPS.length - 1)) * 100;
+
+  let body = "", footer = "";
+  if (step.type === "name") {
+    body = `
+      <div class="hero">
+        <div class="logo">💪</div>
+        <h1>${editing ? "Edit your profile" : "FitYear"}</h1>
+        <p class="muted">${editing
+          ? "Change anything — your plan regenerates instantly and your progress is kept."
+          : "A 2-minute setup builds your complete 1-year fitness journey — 52 weeks of workouts, meals and coaching that adapt to you."}</p>
+      </div>
+      <label class="field"><span>What should we call you?</span>
+        <input id="wname" placeholder="Your name" value="${esc(wiz.data.name || "")}" autocomplete="given-name" /></label>`;
+    footer = `<button class="btn" id="wnext">${editing ? "Continue →" : "Let's go →"}</button>`;
+  } else if (step.type === "body") {
+    body = `
+      <h1>About you</h1>
+      <p class="sub muted">Used only to calculate your calorie and protein targets — everything stays on your device.</p>
+      <div class="form-grid">
+        <label class="field"><span>Age</span><input id="wage" type="number" min="14" max="80" value="${wiz.data.age ?? ""}" placeholder="e.g. 27" /></label>
+        <label class="field"><span>Height (cm)</span><input id="wheight" type="number" min="120" max="230" value="${wiz.data.height ?? ""}" placeholder="e.g. 172" /></label>
+        <label class="field"><span>Weight (kg)</span><input id="wweight" type="number" min="30" max="250" step="0.1" value="${wiz.data.weight ?? ""}" placeholder="e.g. 74" /></label>
+        <div class="field"><span class="flabel">Sex (for calorie calculation)</span>
+          <div class="wchoices row" id="wsex">
+            <div class="wchoice ${wiz.data.sex === "male" ? "selected" : ""}" data-val="male"><span class="wtext"><span class="wlabel">Male</span></span></div>
+            <div class="wchoice ${wiz.data.sex === "female" ? "selected" : ""}" data-val="female"><span class="wtext"><span class="wlabel">Female</span></span></div>
+          </div></div>
+      </div>`;
+    footer = `<button class="btn" id="wnext">Next →</button>`;
+  } else if (step.type === "choice") {
+    body = `
+      <h1>${step.title}</h1>
+      <p class="sub muted">${step.sub}</p>
+      <div class="wchoices ${step.row ? "row" : ""}">
+        ${step.opts.map(([val, icon, label, sub]) => `
+          <div class="wchoice ${String(wiz.data[step.id]) === val ? "selected" : ""}" data-val="${val}">
+            ${icon ? `<span class="wicon">${icon}</span>` : ""}
+            <span class="wtext"><span class="wlabel">${label}</span>${sub ? `<span class="wsub">${sub}</span>` : ""}</span>
+          </div>`).join("")}
+      </div>`;
+    if (wiz.data[step.id] != null) footer = `<button class="btn" id="wnext">Next →</button>`;
+  } else { // summary
+    const d = wiz.data;
+    const draft = profileFromWizard(d);
+    const t = calcTargets(draft);
+    const split = [...new Set(SPLITS[draft.days].map((k) => DAY_TEMPLATES[k].label))];
+    body = `
+      <h1>Your year is ready, ${esc(d.name)} 🎉</h1>
+      <p class="sub muted">Here's what we'll build from your answers:</p>
+      <div class="stats">
+        <div class="stat"><div class="val">${t.calories}</div><div class="lbl">kcal / day</div></div>
+        <div class="stat"><div class="val">${t.protein} g</div><div class="lbl">protein / day</div></div>
+        <div class="stat"><div class="val">${draft.days}×</div><div class="lbl">workouts / week</div></div>
+        <div class="stat"><div class="val">52</div><div class="lbl">weeks planned</div></div>
+      </div>
+      <div class="card">
+        <h3>🏋️ Your weekly split</h3>
+        <div class="sumchips mt4">${split.map((s) => `<span class="sumchip">${s}</span>`).join("")}</div>
+        <h3 class="mt">💊 Your supplement stack</h3>
+        <div class="sumchips mt4">${supplementStack(draft).map((s) => `<span class="sumchip">${s.icon} ${s.name}</span>`).join("")}</div>
+        <h3 class="mt">📊 The journey</h3>
+        <div class="muted small mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
+      </div>`;
+    footer = `<button class="btn gold" id="wfinish">${editing ? "Save & regenerate my plan →" : "Generate my 1-year plan →"}</button>`;
+  }
+
   $app.innerHTML = `
-    <div class="hero">
-      <div class="logo">💪</div>
-      <h1>FitYear</h1>
-      <p class="muted">Answer a few questions and get your complete 1-year fitness journey —
-      weekly workouts, meals and schedules, automatically planned and progressed for 52 weeks.</p>
-    </div>
-    <div class="card">
-      <form id="onboard" class="form-grid">
-        <label class="field"><span>Your name</span><input name="name" required placeholder="e.g. Ayush" /></label>
-        <label class="field"><span>Age</span><input name="age" type="number" min="14" max="80" required placeholder="e.g. 27" /></label>
-        <label class="field"><span>Height (cm)</span><input name="height" type="number" min="120" max="230" required placeholder="e.g. 172" /></label>
-        <label class="field"><span>Weight (kg)</span><input name="weight" type="number" min="30" max="250" step="0.1" required placeholder="e.g. 74" /></label>
-
-        <div class="field full"><span class="flabel">Sex (for calorie calculation)</span>
-          <div class="choice-row" data-name="sex">
-            <div class="choice" data-val="male">Male</div>
-            <div class="choice" data-val="female">Female</div>
-          </div></div>
-
-        <div class="field full"><span class="flabel">Main goal</span>
-          <div class="choice-row" data-name="goal">
-            <div class="choice" data-val="lose">Lose fat</div>
-            <div class="choice" data-val="gain">Build muscle</div>
-            <div class="choice" data-val="maintain">Get fit &amp; maintain</div>
-          </div></div>
-
-        <div class="field full"><span class="flabel">Training experience</span>
-          <div class="choice-row" data-name="experience">
-            <div class="choice" data-val="newbie">Newbie<span class="csub">never trained</span></div>
-            <div class="choice" data-val="beginner">Beginner<span class="csub">&lt; 1 year</span></div>
-            <div class="choice" data-val="intermediate">Intermediate<span class="csub">1–3 years</span></div>
-            <div class="choice" data-val="advanced">Advanced<span class="csub">3–5 years</span></div>
-            <div class="choice" data-val="athlete">Athlete<span class="csub">5+ years</span></div>
-          </div></div>
-
-        <div class="field full"><span class="flabel">Daily activity outside workouts</span>
-          <div class="choice-row" data-name="activity">
-            <div class="choice" data-val="sedentary">Desk job, little walking</div>
-            <div class="choice" data-val="light">Some walking daily</div>
-            <div class="choice" data-val="moderate">On my feet a lot</div>
-            <div class="choice" data-val="very">Physically demanding</div>
-          </div></div>
-
-        <div class="field full"><span class="flabel">Workout days per week</span>
-          <div class="choice-row" data-name="days">
-            <div class="choice" data-val="2">2</div>
-            <div class="choice" data-val="3">3</div>
-            <div class="choice" data-val="4">4</div>
-            <div class="choice" data-val="5">5</div>
-            <div class="choice" data-val="6">6</div>
-          </div></div>
-
-        <div class="field full"><span class="flabel">Equipment available</span>
-          <div class="choice-row" data-name="equipment">
-            <div class="choice" data-val="none">None<span class="csub">bodyweight only</span></div>
-            <div class="choice" data-val="home">Home<span class="csub">dumbbells / bands</span></div>
-            <div class="choice" data-val="gym">Full gym</div>
-          </div></div>
-
-        <div class="field full"><span class="flabel">Diet preference</span>
-          <div class="choice-row" data-name="diet">
-            <div class="choice" data-val="veg">Vegetarian</div>
-            <div class="choice" data-val="nonveg">Non-vegetarian</div>
-            <div class="choice" data-val="vegan">Vegan</div>
-          </div></div>
-
-        <div class="full"><button type="submit" class="btn">Generate my 1-year plan →</button></div>
-      </form>
+    <div class="wiz">
+      <div class="wiz-top">
+        <button class="iconbtn" id="wback" title="Back">‹</button>
+        <div class="wiz-meter">
+          <div class="wiz-step-label">Step ${wiz.step + 1} of ${WIZ_STEPS.length}</div>
+          <div class="wizbar"><div style="width:${pct}%"></div></div>
+        </div>
+      </div>
+      <div class="wizstep">${body}<div class="navrow">${footer}</div></div>
     </div>`;
 
-  $app.querySelectorAll(".choice-row").forEach((row) => {
-    row.addEventListener("click", (e) => {
-      const opt = e.target.closest(".choice");
-      if (!opt) return;
-      row.querySelectorAll(".choice").forEach((c) => c.classList.remove("selected"));
-      opt.classList.add("selected");
-    });
+  const backBtn = document.getElementById("wback");
+  if (wiz.step === 0 && !editing) backBtn.style.visibility = "hidden";
+  backBtn.addEventListener("click", () => {
+    if (wiz.step === 0) {
+      if (editing) { state.ui.editingProfile = false; wiz = null; render(); }
+      return;
+    }
+    wiz.step--;
+    renderOnboarding();
   });
 
-  document.getElementById("onboard").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const f = e.target;
-    const choices = {};
-    let missing = null;
-    $app.querySelectorAll(".choice-row").forEach((row) => {
-      const sel = row.querySelector(".choice.selected");
-      if (!sel && !missing) missing = row;
-      if (sel) choices[row.dataset.name] = sel.dataset.val;
-    });
-    if (missing) { missing.scrollIntoView({ behavior: "smooth", block: "center" }); missing.style.outline = "2px solid var(--accent)"; return; }
+  const next = () => { wiz.step++; renderOnboarding(); window.scrollTo(0, 0); };
 
-    const existing = state.profile;
-    state.profile = {
-      name: f.name.value.trim(),
-      age: +f.age.value,
-      height: +f.height.value,
-      weight: +f.weight.value,
-      sex: choices.sex,
-      goal: choices.goal,
-      experience: choices.experience,
-      activity: choices.activity,
-      days: +choices.days,
-      equipment: choices.equipment,
-      diet: choices.diet,
-      startDate: existing?.startDate || new Date().toISOString().slice(0, 10),
+  if (step.type === "name") {
+    const input = document.getElementById("wname");
+    const go = () => {
+      const v = input.value.trim();
+      if (!v) { input.focus(); input.style.outline = "2px solid #ff5470"; return; }
+      wiz.data.name = v;
+      next();
     };
-    if (!existing) state.progress = { completed: {}, weights: { 1: state.profile.weight }, currentWeek: 1 };
-    save(STORE.profile, state.profile);
-    save(STORE.progress, state.progress);
-    render();
-    window.scrollTo(0, 0);
-  });
+    document.getElementById("wnext").addEventListener("click", go);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  } else if (step.type === "body") {
+    document.querySelectorAll("#wsex .wchoice").forEach((c) =>
+      c.addEventListener("click", () => {
+        wiz.data.sex = c.dataset.val;
+        document.querySelectorAll("#wsex .wchoice").forEach((x) => x.classList.remove("selected"));
+        c.classList.add("selected");
+      }));
+    document.getElementById("wnext").addEventListener("click", () => {
+      const check = (id, min, max) => {
+        const el = document.getElementById(id);
+        const v = parseFloat(el.value);
+        const ok = v >= min && v <= max;
+        el.style.outline = ok ? "" : "2px solid #ff5470";
+        return ok ? v : null;
+      };
+      const age = check("wage", 14, 80);
+      const height = check("wheight", 120, 230);
+      const weight = check("wweight", 30, 250);
+      if (age === null || height === null || weight === null || !wiz.data.sex) return;
+      Object.assign(wiz.data, { age, height, weight });
+      next();
+    });
+  } else if (step.type === "choice") {
+    document.querySelectorAll(".wchoices .wchoice").forEach((c) =>
+      c.addEventListener("click", () => {
+        wiz.data[step.id] = c.dataset.val;
+        document.querySelectorAll(".wchoices .wchoice").forEach((x) => x.classList.remove("selected"));
+        c.classList.add("selected");
+        setTimeout(next, 240); // brief beat so the selection is seen
+      }));
+    document.getElementById("wnext")?.addEventListener("click", next);
+  } else {
+    document.getElementById("wfinish").addEventListener("click", finishOnboarding);
+  }
 }
 
 /* ================= Voice logging (Web Speech API) ================= */
@@ -397,12 +490,15 @@ function closeTutorial() {
   document.getElementById("tmodal")?.remove();
 }
 
-// One delegated listener so tutorial links work in every tab without rewiring.
+// One delegated listener so tutorial/help links work in every tab without rewiring.
 document.addEventListener("click", (e) => {
   const b = e.target.closest(".exname");
   if (b) openTutorial(b.dataset.ex);
+  if (e.target.closest(".helpbtn")) openHelp();
 });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeTutorial(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); }
+});
 
 /* ================= Shared blocks ================= */
 
@@ -504,10 +600,13 @@ function renderToday() {
           <div class="th-day">Day ${t.dayNum} <span class="of">/ 365</span></div>
           <div class="muted">Hi ${esc(p.name)} · Week ${t.week} · ${ph.name} · ${EXPERIENCE[p.experience].label}</div>
         </div>
-        <div class="th-gam">
-          <div class="flame ${st.current > 0 ? "lit" : ""}">🔥 ${st.current}</div>
-          <div class="lvl">Lv ${x.level + 1} · ${x.levelName}</div>
-          <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
+        <div class="th-right">
+          <div class="th-gam">
+            <div class="flame ${st.current > 0 ? "lit" : ""}">🔥 ${st.current}</div>
+            <div class="lvl">Lv ${x.level + 1} · ${x.levelName}</div>
+            <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
+          </div>
+          <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
         </div>
       </div>
       <div class="phase-chip">${ph.intensity} — ${ph.focus}
@@ -525,6 +624,7 @@ function renderToday() {
     </div>
 
     <div class="card">${mealsBlock(day.meals, targets.calories)}</div>
+    ${suppCard(t.week, t.dayIdx, day.isTraining)}
     <footer class="note muted small">${HYDRATION_TIP}</footer>`;
 
   document.getElementById("doneBtn").addEventListener("click", () => {
@@ -532,6 +632,48 @@ function renderToday() {
     renderToday();
   });
   wireLiftLogs(renderToday);
+  wireSupps();
+}
+
+/* ---- Supplements (daily checklist) ---- */
+
+function suppCard(week, dayIdx, isTraining) {
+  const stack = supplementStack(state.profile, { trainingDay: isTraining });
+  const key = `w${week}d${dayIdx}`;
+  const ticks = (state.progress.supps || {})[key] || {};
+  return `
+    <div class="card" id="suppCard">
+      <h3>💊 Supplements — best times today</h3>
+      <div class="muted small mt4">All optional, food comes first. The why &amp; how lives in <strong>Plan → 💊 Supplements</strong>.</div>
+      <div class="supps mt">
+        ${stack.map((s) => {
+          // On rest days pre/post-workout slots don't exist — take with a meal instead.
+          const slot = SUPP_SLOTS[(!isTraining && (s.slot === "post" || s.slot === "pre")) ? "meal" : s.slot];
+          return `
+          <label class="supp ${ticks[s.id] ? "done" : ""}">
+            <input type="checkbox" data-supp="${s.id}" data-key="${key}" ${ticks[s.id] ? "checked" : ""} />
+            <span class="sicon">${s.icon}</span>
+            <span class="sbody">
+              <span class="sname">${s.name}${s.optional ? `<em class="sopt">optional</em>` : ""}</span>
+              <span class="small muted">${s.dose}</span>
+            </span>
+            <span class="stime">${slot.icon} ${slot.short}</span>
+          </label>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
+function wireSupps() {
+  document.querySelectorAll("#suppCard input[data-supp]").forEach((chk) => {
+    chk.addEventListener("change", () => {
+      state.progress.supps = state.progress.supps || {};
+      const day = (state.progress.supps[chk.dataset.key] = state.progress.supps[chk.dataset.key] || {});
+      if (chk.checked) day[chk.dataset.supp] = true; else delete day[chk.dataset.supp];
+      save(STORE.progress, state.progress);
+      chk.closest(".supp").classList.toggle("done", chk.checked);
+    });
+  });
 }
 
 /* ================= Plan tab ================= */
@@ -540,6 +682,7 @@ function renderPlan() {
   const p = state.profile;
   const targets = getTargets();
   const week = state.progress.currentWeek;
+  const page = state.ui.planPage;
   const weekPlan = buildWeek(p, targets, week);
   const ph = weekPlan.phase;
 
@@ -548,57 +691,117 @@ function renderPlan() {
     return `<option value="${w}" ${w === week ? "selected" : ""}>Week ${w} — ${phaseForWeek(w).name}</option>`;
   }).join("");
 
-  $view().innerHTML = `
-    <div class="pagehead"><h1>📅 Plan</h1><button class="btn secondary" id="printBtn">🖨️ Print week</button></div>
-
-    <div class="phase-banner">
-      <span class="name">Week ${week} · ${ph.name}</span> — ${ph.intensity}
-      <div class="small mt4">${ph.focus}</div>
-      <div class="small mt4">🎯 ${EXPERIENCE[p.experience].label}: ${EXPERIENCE[p.experience].note}</div>
-    </div>
-
+  const weeknav = `
     <div class="weeknav">
       <button class="navbtn" id="prevWeek" ${week === 1 ? "disabled" : ""}>‹ Prev</button>
       <select id="weekSelect">${weekOptions}</select>
       <button class="navbtn" id="nextWeek" ${week === 52 ? "disabled" : ""}>Next ›</button>
-    </div>
-
-    ${weekPlan.days.map((d) => dayCard(d, week, targets, ph)).join("")}
-
-    <h2 class="section-title">🛒 Grocery list — week ${week}</h2>
-    <div class="card" id="groceryCard">${groceryHtml(week, targets)}</div>
-
-    <h2 class="section-title">🗺️ Your year at a glance</h2>
-    <div class="card">
-      ${yearMilestones(p).map((m) => `<div class="milestone"><div class="at">${m.at}</div><div>${m.text}</div></div>`).join("")}
     </div>`;
 
-  const go = (w) => { state.progress.currentWeek = w; save(STORE.progress, state.progress); renderPlan(); window.scrollTo(0, 0); };
-  document.getElementById("prevWeek").addEventListener("click", () => go(week - 1));
-  document.getElementById("nextWeek").addEventListener("click", () => go(week + 1));
-  document.getElementById("weekSelect").addEventListener("change", (e) => go(+e.target.value));
-  document.getElementById("printBtn").addEventListener("click", () => printWeek(week));
-
-  const rerenderInPlace = () => {
-    const openIds = [...document.querySelectorAll(".day-card.open")].map((c) => c.id);
-    const y = window.scrollY;
-    renderPlan();
-    openIds.forEach((id) => document.getElementById(id)?.classList.add("open"));
-    window.scrollTo(0, y);
+  const pages = {
+    week: () => `
+      <div class="phase-banner">
+        <span class="name">Week ${week} · ${ph.name}</span> — ${ph.intensity}
+        <div class="small mt4">${ph.focus}</div>
+        <div class="small mt4">🎯 ${EXPERIENCE[p.experience].label}: ${EXPERIENCE[p.experience].note}</div>
+      </div>
+      ${weeknav}
+      ${weekPlan.days.map((d) => dayCard(d, week, targets, ph)).join("")}
+      <button class="btn secondary" id="printBtn">🖨️ Print week sheet</button>`,
+    grocery: () => `
+      ${weeknav}
+      <div class="card" id="groceryCard">${groceryHtml(week, targets)}</div>`,
+    supps: () => suppGuide(),
+    year: () => `
+      <h2 class="section-title">🗺️ Your year at a glance</h2>
+      <div class="card">
+        ${yearMilestones(p).map((m) => `<div class="milestone"><div class="at">${m.at}</div><div>${m.text}</div></div>`).join("")}
+      </div>
+      <h2 class="section-title">📊 Training phases</h2>
+      <div class="card">
+        ${PHASES.map((x) => `<div class="milestone"><div class="at">Wk ${x.from}${x.to !== x.from ? "–" + x.to : ""}</div><div><strong>${x.name}</strong> — ${x.focus}</div></div>`).join("")}
+      </div>`,
   };
 
-  document.querySelectorAll(".day-head").forEach((h) =>
-    h.addEventListener("click", () => h.closest(".day-card").classList.toggle("open")));
+  $view().innerHTML = `
+    <div class="pagehead"><h1>📅 Plan</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+    <div class="subnav">
+      ${[["week", "🏋️ Week"], ["grocery", "🛒 Grocery"], ["supps", "💊 Supplements"], ["year", "🗺️ Year"]]
+        .map(([id, label]) => `<button class="${page === id ? "active" : ""}" data-page="${id}">${label}</button>`).join("")}
+    </div>
+    <div id="planPage">${pages[page]()}</div>`;
 
-  document.querySelectorAll('input[type="checkbox"][data-key]').forEach((chk) => {
-    chk.addEventListener("change", () => {
-      setDayDone(chk.dataset.key, chk.checked);
-      rerenderInPlace();
+  document.querySelectorAll(".subnav [data-page]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.ui.planPage = b.dataset.page;
+      renderPlan();
+      animateView();
+      window.scrollTo(0, 0);
+    }));
+
+  if (page === "week" || page === "grocery") {
+    const go = (w) => { state.progress.currentWeek = w; save(STORE.progress, state.progress); renderPlan(); window.scrollTo(0, 0); };
+    document.getElementById("prevWeek").addEventListener("click", () => go(week - 1));
+    document.getElementById("nextWeek").addEventListener("click", () => go(week + 1));
+    document.getElementById("weekSelect").addEventListener("change", (e) => go(+e.target.value));
+  }
+
+  if (page === "week") {
+    document.getElementById("printBtn").addEventListener("click", () => printWeek(week));
+
+    const rerenderInPlace = () => {
+      const openIds = [...document.querySelectorAll(".day-card.open")].map((c) => c.id);
+      const y = window.scrollY;
+      renderPlan();
+      openIds.forEach((id) => document.getElementById(id)?.classList.add("open"));
+      window.scrollTo(0, y);
+    };
+
+    document.querySelectorAll(".day-head").forEach((h) =>
+      h.addEventListener("click", () => h.closest(".day-card").classList.toggle("open")));
+
+    document.querySelectorAll('input[type="checkbox"][data-key]').forEach((chk) => {
+      chk.addEventListener("change", () => {
+        setDayDone(chk.dataset.key, chk.checked);
+        rerenderInPlace();
+      });
     });
-  });
 
-  wireLiftLogs(rerenderInPlace);
-  wireGrocery(week, targets);
+    wireLiftLogs(rerenderInPlace);
+  }
+
+  if (page === "grocery") wireGrocery(week, targets);
+}
+
+/* ---- Supplement guide (Plan → Supplements) ---- */
+
+function suppGuide() {
+  const p = state.profile;
+  const stack = supplementStack(p);
+  const dietLabel = { veg: "vegetarian", nonveg: "non-vegetarian", vegan: "vegan" }[p.diet];
+  return `
+    <div class="card">
+      <h2>💊 Your supplement stack</h2>
+      <div class="muted small mt4">Personalized for <strong>${goalLabel(p.goal).replace(/^\S+ /, "").toLowerCase()}</strong> on a <strong>${dietLabel}</strong> diet.
+      Supplements are the last 5% — they top up good food, training and sleep, never replace them. Tick them off each day on the Today tab.</div>
+    </div>
+    ${stack.map((s) => {
+      const slot = SUPP_SLOTS[s.slot];
+      return `
+      <div class="card suppg">
+        <div class="sg-head">
+          <span class="sicon">${s.icon}</span>
+          <div>
+            <div class="sname">${s.name}${s.optional ? `<em class="sopt">optional</em>` : ""}</div>
+            <span class="stime">${slot.icon} ${slot.label}</span>
+          </div>
+        </div>
+        <div class="sg-dose"><strong>How much:</strong> ${s.dose}</div>
+        <div class="small muted">${s.why}</div>
+        ${s.tip ? `<div class="tnote">💡 ${s.tip}</div>` : ""}
+      </div>`;
+    }).join("")}
+    <footer class="note muted small">General guidance, not medical advice. Check with a doctor first if you take medication, are pregnant, or have a health condition.</footer>`;
 }
 
 function dayCard(d, week, targets, phase) {
@@ -674,7 +877,7 @@ function renderProgress() {
   if (!state.ui.chartEx || !liftExercises.includes(state.ui.chartEx)) state.ui.chartEx = liftExercises[0] || null;
 
   $view().innerHTML = `
-    <div class="pagehead"><h1>📈 Progress</h1></div>
+    <div class="pagehead"><h1>📈 Progress</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
 
     <div class="levelcard card">
       <div class="lc-row">
@@ -750,8 +953,10 @@ function renderProgress() {
 
   document.getElementById("resetBtn").addEventListener("click", () => {
     if (confirm("Edit your profile? Your plan will regenerate (progress is kept).")) {
-      state.profile = null;
+      state.ui.editingProfile = true;
+      wiz = null;
       render();
+      window.scrollTo(0, 0);
     }
   });
 
@@ -929,6 +1134,112 @@ function printGrocery(week, targets) {
   window.print();
 }
 
+/* ================= First-run tour & help ================= */
+
+const TOUR = [
+  { sel: ".th-top", title: "Your daily HQ", text: "Day counter, streak 🔥 and XP level. Show up daily and mark days complete to keep the flame lit." },
+  { sel: ".day-focus", title: "Today's session", text: "Your workout (or recovery plan) for today. Tap any exercise name for a 📖 step-by-step tutorial with demo photos." },
+  { sel: ".liftlog", title: "Log your top set", text: "Type weight × reps — or tap 🎤 and just say “45 kg, 10 reps”. Logged sets build your strength charts." },
+  { sel: "#suppCard", title: "Supplement checklist", text: "What to take and the best time to take it, personalized to your goal and diet. The why & how lives in Plan → 💊 Supplements." },
+  { sel: "#doneBtn", title: "Finish the day", text: "Mark the day complete for +25 XP — that's what grows your streak, levels and badges." },
+  { sel: '.tab[data-tab="plan"]', title: "The Plan tab", text: "All 52 weeks: workouts, grocery lists, your supplement guide and the year roadmap — each on its own page." },
+  { sel: '.tab[data-tab="progress"]', title: "The Progress tab", text: "Weight trend, strength charts and badges. Log your weight once a week — your calories auto-adjust to keep you on track." },
+  { sel: ".helpbtn", title: "Stuck later?", text: "This ? button opens the full guide any time — you can replay this tour from there too. Have a great year 💪" },
+];
+
+let tourIdx = -1;
+
+function startTour() {
+  closeHelp();
+  state.ui.tab = "today";
+  render();
+  window.scrollTo(0, 0);
+  tourIdx = 0;
+  showTourStep();
+}
+
+function endTour() {
+  if (tourIdx < 0) return;
+  tourIdx = -1;
+  document.getElementById("tour")?.remove();
+  if (!state.progress.tourDone) {
+    state.progress.tourDone = true;
+    save(STORE.progress, state.progress);
+  }
+}
+
+function showTourStep() {
+  // Skip steps whose target isn't on screen (e.g. no lift log on rest days).
+  while (tourIdx < TOUR.length && !document.querySelector(TOUR[tourIdx].sel)) tourIdx++;
+  if (tourIdx < 0 || tourIdx >= TOUR.length) { endTour(); return; }
+  const step = TOUR[tourIdx];
+  const el = document.querySelector(step.sel);
+  const vh = window.innerHeight;
+  // Tall targets (e.g. the full workout card) can't be centered — pin their top
+  // instead and clamp the spotlight so the dim ring and tip stay on screen.
+  const tall = el.getBoundingClientRect().height > vh * 0.5;
+  el.scrollIntoView({ block: tall ? "start" : "center" });
+
+  let ov = document.getElementById("tour");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "tour";
+    document.body.appendChild(ov);
+  }
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  const spotTop = Math.max(r.top - pad, 6);
+  const spotH = Math.min(r.height + pad * 2, vh * 0.55);
+  const below = spotTop + spotH < vh * 0.72;
+  ov.innerHTML = `
+    <div class="tour-spot" style="left:${r.left - pad}px;top:${spotTop}px;width:${r.width + pad * 2}px;height:${spotH}px"></div>
+    <div class="tour-tip" style="${below ? `top:${spotTop + spotH + 10}px` : `bottom:${vh - spotTop + 10}px`}">
+      <div class="tstep">TIP ${tourIdx + 1} OF ${TOUR.length}</div>
+      <h3>${step.title}</h3>
+      <p>${step.text}</p>
+      <div class="tour-btns">
+        <button class="tour-skip" id="tourSkip">Skip tour</button>
+        <button class="btn tiny" id="tourNext">${tourIdx === TOUR.length - 1 ? "Done ✓" : "Next →"}</button>
+      </div>
+    </div>`;
+  document.getElementById("tourSkip").addEventListener("click", endTour);
+  document.getElementById("tourNext").addEventListener("click", () => { tourIdx++; showTourStep(); });
+}
+
+const HELP_SECTIONS = [
+  ["☀️", "Today", "Your workout, meals and supplement checklist for the current day. Mark the day complete for +25 XP."],
+  ["📖", "Exercise how-tos", "Tap any exercise name anywhere in the app for step-by-step instructions with demo photos and video links."],
+  ["🎤", "Voice logging", "Next to each exercise, tap 🎤 and say your top set — “45 kg, 10 reps”. Or just type it in."],
+  ["📅", "Plan", "Browse all 52 weeks of workouts and meals, jump between weeks, and print a paper sheet for the gym."],
+  ["🛒", "Grocery", "A checkable shopping list covering every meal of the selected week — printable too."],
+  ["💊", "Supplements", "Your personalized stack with doses and best timing lives in Plan → Supplements; tick them off daily on Today."],
+  ["⚖️", "Weekly check-in", "Log your weight once a week in Progress. The coach compares your trend to the healthy rate and auto-adjusts your calories."],
+  ["🏅", "XP, streaks & badges", "Completed days, logged sets and check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 8 badges."],
+  ["💾", "Backup & privacy", "Everything stays on your device. Use Backup/Restore in Progress to move your data to a new phone."],
+];
+
+function openHelp() {
+  closeHelp();
+  const modal = document.createElement("div");
+  modal.className = "tmodal";
+  modal.id = "helpModal";
+  modal.innerHTML = `
+    <div class="tcard">
+      <button class="tclose" aria-label="Close">✕</button>
+      <h2>❓ How FitYear works</h2>
+      ${HELP_SECTIONS.map(([icon, t, d]) => `
+        <div class="helprow"><span class="hicon">${icon}</span><div><strong>${t}</strong><div class="small muted">${d}</div></div></div>`).join("")}
+      <button class="btn secondary mt" id="replayTour">▶ Replay the guided tour</button>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal || e.target.closest(".tclose")) closeHelp();
+  });
+  document.getElementById("replayTour").addEventListener("click", startTour);
+}
+
+function closeHelp() { document.getElementById("helpModal")?.remove(); }
+
 /* ---- helpers ---- */
 function goalLabel(g) {
   return { lose: "🔥 Losing fat", gain: "💪 Building muscle", maintain: "⚖️ Getting fit" }[g];
@@ -938,3 +1249,5 @@ function esc(s) {
 }
 
 render();
+// Show the guided tour once — for brand-new plans and for existing users after this update.
+if (state.profile && !state.ui.editingProfile && !state.progress.tourDone) setTimeout(startTour, 400);

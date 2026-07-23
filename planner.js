@@ -186,6 +186,17 @@ function buildWeek(profile, targets, week) {
   return { week, phase: ph, days };
 }
 
+// Personalized supplement stack for a profile, ordered by time of day.
+function supplementStack(profile, { trainingDay = true } = {}) {
+  const order = ["morning", "pre", "post", "meal", "anytime"];
+  return SUPPLEMENTS
+    .filter((s) =>
+      (!s.goals || s.goals.includes(profile.goal)) &&
+      (!s.diets || s.diets.includes(profile.diet)) &&
+      (trainingDay || !s.trainOnly))
+    .sort((a, b) => order.indexOf(a.slot) - order.indexOf(b.slot));
+}
+
 // Rough progress milestones for the year overview.
 function yearMilestones(profile) {
   const goalText = {

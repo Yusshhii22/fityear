@@ -12,7 +12,10 @@
 
 ## Features
 
+- **Step-by-step onboarding** — a one-question-per-screen wizard that ends with a personalized plan preview
 - **52-week periodized program** — Foundation → Build → Strength → Peak phases with deload weeks, matched to your equipment (none / home / gym) and 2–6 training days per week
+- **Supplement guidance** — a stack personalized to your goal and diet with doses and best timing: daily checklist on Today, full why-and-how guide in Plan
+- **Built-in app tutorial** — a first-run guided tour plus a replayable ❓ help guide
 - **Exercise tutorials** — tap any exercise for step-by-step instructions with animated demo photos (courtesy of the public-domain [free-exercise-db](https://github.com/yuhonas/free-exercise-db)) and video links
 - **Meals with gram portions** — 60 Indian-friendly meals (veg / non-veg / vegan) computed from an ingredient database and scaled to your calorie & protein targets
 - **Weekly grocery lists** — checkable in-app and printable
