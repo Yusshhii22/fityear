@@ -76,17 +76,34 @@ const EXPERIENCE = {
   athlete:      { label: "Athlete",      setAdj: 1,  extraEx: 1, note: "Extra volume + a 🏆 bonus exercise each session. On the final set of big lifts add a technique: pause reps, a drop set, or rest-pause." },
 };
 
+// Who is using the app. Trainers see the programming rationale (pro notes
+// below); everyone else gets the plain-English coaching only.
+const ROLES = {
+  trainer: { label: "Pro Trainer", icon: "🎓" },
+  bro:     { label: "Gym Bro/Sis", icon: "💪" },
+};
+
 // 52-week periodization. Each phase: sets/reps scheme + focus note.
+// `pro` is the trainer-facing programming rationale for that block.
 const PHASES = [
-  { from: 1,  to: 4,  name: "Foundation",       sets: 2, reps: "12–15", rest: "60s",  intensity: "Easy–moderate (RPE 6)", focus: "Learn every movement with perfect form. Weights stay light — consistency is the only goal this month." },
-  { from: 5,  to: 12, name: "Build I",          sets: 3, reps: "10–12", rest: "75s",  intensity: "Moderate (RPE 7)",      focus: "Add a little weight or 1–2 reps every week. Finish all sets close to — but not at — failure." },
-  { from: 13, to: 13, name: "Deload",           sets: 2, reps: "10",    rest: "60s",  intensity: "Light (RPE 5)",         focus: "Recovery week. Half the usual effort, extra sleep, extra walking. You'll come back stronger." },
-  { from: 14, to: 25, name: "Build II",         sets: 3, reps: "8–12",  rest: "90s",  intensity: "Moderate-hard (RPE 7–8)", focus: "New exercise variations this phase. Push the last set of each exercise harder." },
-  { from: 26, to: 26, name: "Deload + Check-in", sets: 2, reps: "10",   rest: "60s",  intensity: "Light (RPE 5)",         focus: "Halfway point! Recovery week. Re-take measurements and progress photos, compare to week 1." },
-  { from: 27, to: 38, name: "Strength",         sets: 4, reps: "6–8",   rest: "2min", intensity: "Hard (RPE 8)",          focus: "Heavier weight, fewer reps, longer rest. Log your top set each session and try to beat it." },
-  { from: 39, to: 39, name: "Deload",           sets: 2, reps: "10",    rest: "60s",  intensity: "Light (RPE 5)",         focus: "Recovery week before the final push." },
-  { from: 40, to: 51, name: "Peak",             sets: 4, reps: "8–12",  rest: "90s",  intensity: "Hard (RPE 8–9)",        focus: "Highest volume of the year. Everything you've built comes together — chase rep PRs." },
-  { from: 52, to: 52, name: "Victory Lap",      sets: 3, reps: "10",    rest: "90s",  intensity: "Moderate (RPE 7)",      focus: "One year done. Re-test everything from week 1, take final photos, and plan year two. Be proud." },
+  { from: 1,  to: 4,  name: "Foundation",       sets: 2, reps: "12–15", rest: "60s",  intensity: "Easy–moderate (RPE 6)", focus: "Learn every movement with perfect form. Weights stay light — consistency is the only goal this month.",
+    pro: "Anatomical adaptation: 2×12–15 @ RPE 6, slow eccentrics, groove movement patterns before loading." },
+  { from: 5,  to: 12, name: "Build I",          sets: 3, reps: "10–12", rest: "75s",  intensity: "Moderate (RPE 7)",      focus: "Add a little weight or 1–2 reps every week. Finish all sets close to — but not at — failure.",
+    pro: "Hypertrophy block 1: 3×10–12 @ RPE 7, double progression (reps first, then load)." },
+  { from: 13, to: 13, name: "Deload",           sets: 2, reps: "10",    rest: "60s",  intensity: "Light (RPE 5)",         focus: "Recovery week. Half the usual effort, extra sleep, extra walking. You'll come back stronger.",
+    pro: "Deload: ~50% volume cut @ RPE 5, keep frequency and patterns, restore readiness." },
+  { from: 14, to: 25, name: "Build II",         sets: 3, reps: "8–12",  rest: "90s",  intensity: "Moderate-hard (RPE 7–8)", focus: "New exercise variations this phase. Push the last set of each exercise harder.",
+    pro: "Hypertrophy block 2: 3×8–12 @ RPE 7–8, rotated variations for novel stimulus, top-set emphasis." },
+  { from: 26, to: 26, name: "Deload + Check-in", sets: 2, reps: "10",   rest: "60s",  intensity: "Light (RPE 5)",         focus: "Halfway point! Recovery week. Re-take measurements and progress photos, compare to week 1.",
+    pro: "Deload + mid-macro assessment: measurements, photos, and informal strength re-tests." },
+  { from: 27, to: 38, name: "Strength",         sets: 4, reps: "6–8",   rest: "2min", intensity: "Hard (RPE 8)",          focus: "Heavier weight, fewer reps, longer rest. Log your top set each session and try to beat it.",
+    pro: "Strength block: 4×6–8 @ RPE 8, full rests, track top sets — the app charts estimated 1RM (Epley)." },
+  { from: 39, to: 39, name: "Deload",           sets: 2, reps: "10",    rest: "60s",  intensity: "Light (RPE 5)",         focus: "Recovery week before the final push.",
+    pro: "Deload pre-peak: ~50% volume cut @ RPE 5 to dissipate fatigue before the overreach block." },
+  { from: 40, to: 51, name: "Peak",             sets: 4, reps: "8–12",  rest: "90s",  intensity: "Hard (RPE 8–9)",        focus: "Highest volume of the year. Everything you've built comes together — chase rep PRs.",
+    pro: "Peak volume block: 4×8–12 @ RPE 8–9, highest tonnage of the macrocycle, rep-PR focus." },
+  { from: 52, to: 52, name: "Victory Lap",      sets: 3, reps: "10",    rest: "90s",  intensity: "Moderate (RPE 7)",      focus: "One year done. Re-test everything from week 1, take final photos, and plan year two. Be proud.",
+    pro: "Transition week: 3×10 @ RPE 7, full re-test battery, then plan the next macrocycle." },
 ];
 
 // ===== Ingredients =====

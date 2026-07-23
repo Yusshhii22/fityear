@@ -21,6 +21,11 @@ if (state.profile && !state.profile.experience) {
   state.profile.experience = "beginner";
   save(STORE.profile, state.profile);
 }
+// Profiles created before the trainer/enthusiast split default to enthusiast.
+if (state.profile && !state.profile.role) {
+  state.profile.role = "bro";
+  save(STORE.profile, state.profile);
+}
 
 const $app = document.getElementById("app");
 
@@ -134,6 +139,9 @@ function animateView() {
 /* ================= Onboarding wizard ================= */
 
 const WIZ_STEPS = [
+  { id: "role", type: "choice", hero: true, title: "Who's using FitYear?", sub: "Both are welcome — this just tunes the coaching language for you.", opts: [
+    ["trainer", "🎓", "Professional trainer", "I coach people — show me the programming rationale"],
+    ["bro", "💪", "Gym bro / sis", "I'm here for my own fitness journey"]] },
   { id: "welcome", type: "name" },
   { id: "body", type: "body" },
   { id: "goal", type: "choice", title: "What's your main goal?", sub: "Everything — workouts, calories, meals — is built around this.", opts: [
@@ -168,6 +176,7 @@ let wiz = null;
 
 function profileFromWizard(d) {
   return {
+    role: d.role,
     name: d.name, age: +d.age, height: +d.height, weight: +d.weight, sex: d.sex,
     goal: d.goal, experience: d.experience, activity: d.activity, days: +d.days,
     equipment: d.equipment, diet: d.diet,
@@ -224,7 +233,8 @@ function renderOnboarding() {
     footer = `<button class="btn" id="wnext">Next →</button>`;
   } else if (step.type === "choice") {
     body = `
-      <h1>${step.title}</h1>
+      ${step.hero ? `<div class="hero"><div class="logo">💪</div><h1>FitYear</h1></div>` : `<h1>${step.title}</h1>`}
+      ${step.hero ? `<h1>${step.title}</h1>` : ""}
       <p class="sub muted">${step.sub}</p>
       <div class="wchoices ${step.row ? "row" : ""}">
         ${step.opts.map(([val, icon, label, sub]) => `
@@ -255,6 +265,7 @@ function renderOnboarding() {
         <div class="sumchips mt4">${supplementStack(draft).map((s) => `<span class="sumchip">${s.icon} ${s.name}</span>`).join("")}</div>
         <h3 class="mt">📊 The journey</h3>
         <div class="muted small mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
+        ${d.role === "trainer" ? `<div class="tnote mt">🎓 Trainer mode: phase banners include the programming rationale (schemes, RPE, progression logic), and week sheets print clean for handing to clients.</div>` : ""}
       </div>`;
     footer = `<button class="btn gold" id="wfinish">${editing ? "Save & regenerate my plan →" : "Generate my 1-year plan →"}</button>`;
   }
@@ -611,6 +622,7 @@ function renderToday() {
       </div>
       <div class="phase-chip">${ph.intensity} — ${ph.focus}
         <div class="small mt4">🎯 ${EXPERIENCE[p.experience].note}</div>
+        ${p.role === "trainer" ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
       </div>
     </div>
 
@@ -704,6 +716,7 @@ function renderPlan() {
         <span class="name">Week ${week} · ${ph.name}</span> — ${ph.intensity}
         <div class="small mt4">${ph.focus}</div>
         <div class="small mt4">🎯 ${EXPERIENCE[p.experience].label}: ${EXPERIENCE[p.experience].note}</div>
+        ${p.role === "trainer" ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
       </div>
       ${weeknav}
       ${weekPlan.days.map((d) => dayCard(d, week, targets, ph)).join("")}
