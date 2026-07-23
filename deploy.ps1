@@ -7,7 +7,7 @@ $root = $PSScriptRoot
 $swPath = Join-Path $root "sw.js"
 
 # Bump fityear-vN -> fityear-v(N+1) so installed PWAs pick up the new files
-$sw = Get-Content $swPath -Raw
+$sw = Get-Content $swPath -Raw -Encoding UTF8
 if ($sw -notmatch 'fityear-v(\d+)') { throw "Could not find cache version in sw.js" }
 $next = [int]$Matches[1] + 1
 $sw = $sw -replace 'fityear-v\d+', "fityear-v$next"
