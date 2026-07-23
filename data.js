@@ -33,6 +33,49 @@ const EXERCISES = {
     core:       [["Cable Crunch", "Round the spine"], ["Hanging Leg Raise", "No swing"], ["Plank", "60s"], ["Ab Wheel Rollout", "As far as controllable"], ["Weighted Side Bend", "Each side"], ["Decline Sit-Up", "Slow"]],
     cardio:     [["Incline Treadmill Walk", "20–30 min"], ["Stationary Bike Intervals", "30s hard / 90s easy × 10"], ["Rowing Machine", "15–20 min steady"], ["Stairmaster", "15 min"]],
   },
+  calisthenics: { // bar-based bodyweight skill work
+    quads:      [["Assisted Pistol Squat", "Hold a pole/door frame, each leg"], ["Cossack Squat", "Each side"], ["Jump Squat", "Land soft"], ["Bulgarian Split Squat (bodyweight)", "Rear foot on a bench"]],
+    hinge:      [["Nordic Curl Negative", "Anchor feet, lower as slow as possible"], ["Single-Leg Glute Bridge", "Each leg"], ["Glute Bridge March", "Alternate legs, hips level"], ["Broad Jump", "Stick the landing"]],
+    push:       [["Dip (parallel bars)", "Slight forward lean"], ["Push-Up", "Chest to floor"], ["Pseudo Planche Push-Up", "Hands by hips, lean forward"], ["Decline Push-Up", "Feet elevated"]],
+    pull:       [["Pull-Up", "Full hang, chest to bar"], ["Australian Row (low bar)", "Body straight"], ["Chin-Up", "Squeeze at the top"], ["Archer Pull-Up Progression", "Shift side to side"]],
+    shoulders:  [["Pike Push-Up", "Hips high"], ["Wall Handstand Hold", "Only if confident"], ["Handstand Push-Up Progression", "Partial range first"], ["Lateral Plank Walk", "10 steps each way"]],
+    arms:       [["Close-Grip Chin-Up", "Biceps focus"], ["Diamond Push-Up", "Triceps"], ["Straight-Bar Dip", "Elbows back"], ["Bench Dip", "Slow negative"]],
+    core:       [["Hanging Leg Raise", "No swing"], ["L-Sit Progression", "Tucked first, extend later"], ["Hollow Body Hold", "Lower back pressed down"], ["Dragon Flag Negative", "As slow as possible"], ["Plank", "60s"]],
+    cardio:     [["Burpee Intervals", "30s on / 30s off × 8"], ["Jump Rope", "10–15 min"], ["Sprint Intervals", "8 × 20s, walk back to recover"], ["Stair Climbs", "10–15 min"]],
+  },
+  crossfit: { // functional HIIT — kettlebell/dumbbell/barbell helpful, scalable
+    quads:      [["Air Squat", "Fast pace, crisp reps"], ["Wall Ball / DB Thruster", "Full depth, drive up"], ["Goblet Squat (KB/DB)", "Upright torso"], ["Box Step-Up or Jump", "Land soft"]],
+    hinge:      [["Kettlebell Swing", "Snap the hips, arms relaxed"], ["Deadlift (barbell or KB)", "Brace hard, flat back"], ["Single-Leg RDL", "Each leg"], ["Broad Jump", "Stick the landing"]],
+    push:       [["Push Press", "Use leg drive"], ["Burpee", "Chest to floor every rep"], ["Hand-Release Push-Up", "Full reset each rep"], ["DB Floor Press", "Control the descent"]],
+    pull:       [["Pull-Up (strict or banded)", "Full hang"], ["Ring/TRX or Table Row", "Body straight"], ["Renegade Row", "Minimal hip sway"], ["Bent-Over Row", "Flat back"]],
+    shoulders:  [["Strict Overhead Press", "Brace core"], ["DB Snatch", "Alternate arms"], ["Wall Walk", "Slow and controlled"], ["DB Lateral Raise", "Light, controlled"]],
+    arms:       [["Ring or Bench Dip", "Elbows back"], ["Chin-Up", "Or isometric hold"], ["Hammer Curl", "No swinging"], ["Close-Grip Push-Up", "Elbows tucked"]],
+    core:       [["Toes-to-Bar / Knee Raise", "No swing"], ["V-Up", "Reach for your toes"], ["Plank", "60s"], ["Butterfly Sit-Up", "Touch behind your head"], ["Russian Twist", "Controlled"]],
+    cardio:     [["Row / Bike Intervals", "30s hard / 90s easy × 10"], ["Double-Unders / Jump Rope", "10–15 min"], ["EMOM Burpees", "10 burpees every minute × 10"], ["400m Run Repeats", "4–6 rounds, rest 90s"]],
+  },
+  yoga: { // yoga & pilates — mat-based strength, control and mobility
+    quads:      [["Chair Pose Hold", "Sink hips, weight in heels"], ["Warrior II Pose", "30s each side"], ["Crescent Lunge Pulse", "Small pulses, each leg"], ["Pilates Squat to Heel Raise", "Slow tempo"]],
+    hinge:      [["Bridge Pose Hold", "Squeeze glutes at the top"], ["Single-Leg Bridge Lift", "Each leg"], ["Locust Pose Hold", "Lift chest and legs"], ["Pilates Shoulder Bridge", "Roll up one vertebra at a time"]],
+    push:       [["Chaturanga Push-Up", "Elbows tucked, knees down if needed"], ["Dolphin Push-Up", "Forearms down, nose to floor"], ["Pilates Push-Up", "Roll down, walk out, push"], ["Down Dog to Plank Flow", "Slow transitions"]],
+    pull:       [["Superman Hold", "Hold 10–20s"], ["Pilates Swimming", "Steady flutter, long limbs"], ["Reverse Plank Hold", "Open the chest"], ["Prone Y-T-W Raise", "Slow and controlled"]],
+    shoulders:  [["Dolphin Pose Hold", "Hips high, forearms down"], ["Down Dog Hold", "Press the floor away"], ["Side Plank Star Pose", "Each side"], ["Pilates Arm Circle Series", "45s continuous"]],
+    arms:       [["Crow Pose Practice", "Play at your edge, cushion below"], ["Chaturanga Hold", "Hover halfway down"], ["Side Plank Pose", "Each side"], ["Mat Triceps Dip", "From reverse tabletop"]],
+    core:       [["Boat Pose Hold", "Long spine, chest open"], ["Pilates Hundred", "Pump arms, steady breath"], ["Pilates Teaser Progression", "Roll up with control"], ["Dead Bug", "Slow, lower back flat"], ["Side Plank Pose", "Each side"]],
+    cardio:     [["Sun Salutation Rounds", "8–10 continuous rounds"], ["Power Vinyasa Flow", "15–20 min steady"], ["Brisk Walk", "20–30 min"], ["Pilates Standing Series", "10 min continuous"]],
+  },
+};
+
+// Cool-down stretches per movement category — each workout ends with the
+// stretches matching what was actually trained. [name, duration]
+const COOLDOWNS = {
+  quads:     [["Standing quad stretch", "30s each side"], ["Kneeling hip-flexor stretch", "30s each side"], ["Deep squat hold", "45s"]],
+  hinge:     [["Standing hamstring stretch", "30s each side"], ["Figure-4 glute stretch", "30s each side"], ["Seated forward fold", "45s"]],
+  push:      [["Doorway chest stretch", "30s"], ["Overhead triceps stretch", "20s each arm"], ["Wall pec stretch", "30s each side"]],
+  pull:      [["Overhead lat stretch (hold a frame, lean back)", "30s each side"], ["Dead hang or child's pose", "30–45s"], ["Cross-body rear-delt stretch", "20s each arm"]],
+  shoulders: [["Cross-body shoulder stretch", "20s each arm"], ["Thread-the-needle", "30s each side"], ["Doorway chest stretch", "30s"]],
+  arms:      [["Overhead triceps stretch", "20s each arm"], ["Wall biceps stretch", "20s each arm"], ["Wrist circles + forearm stretch", "30s"]],
+  core:      [["Cobra stretch", "30s"], ["Cat-cow", "6 slow rounds"], ["Child's pose", "45s"]],
+  cardio:    [["Slow walk to bring heart rate down", "2 min"], ["Standing calf stretch", "30s each side"], ["Deep belly breathing", "5 slow breaths"]],
 };
 
 // Workout day templates: list of [category, slots] — how many exercises from each category.

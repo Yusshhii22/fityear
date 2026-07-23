@@ -55,7 +55,7 @@ function buildWorkout(templateKey, week, equipment, experience) {
   for (const [category, count] of tpl.slots) {
     for (const [name, note] of pickExercises(category, count, equipment, week, slotOffset)) {
       const isCardio = category === "cardio";
-      const isHold = /plank|hold|wall sit|walk/i.test(name) && !isCardio;
+      const isHold = /plank|hold|wall sit|walk|pose/i.test(name) && !isCardio;
       exercises.push({
         name,
         note,
@@ -76,7 +76,7 @@ function buildWorkout(templateKey, week, equipment, experience) {
       const candidate = EXERCISES[equipment][category].find(([n]) => !used.has(n));
       if (candidate) {
         const [name, note] = candidate;
-        const isHold = /plank|hold|wall sit|walk/i.test(name);
+        const isHold = /plank|hold|wall sit|walk|pose/i.test(name);
         const bonus = {
           name, note, bonus: true,
           sets: `${sets} sets`,
@@ -90,7 +90,17 @@ function buildWorkout(templateKey, week, equipment, experience) {
     }
   }
 
-  return { label: tpl.label, exercises, warmup: "5 min warm-up: light cardio + arm/leg swings", cooldown: "5 min cool-down: stretch what you trained" };
+  // Cool-down: one stretch per trained movement category, rotated each phase
+  // for variety and de-duplicated (some stretches cover multiple groups).
+  const seen = new Set();
+  const cooldown = [];
+  [...new Set(tpl.slots.map(([cat]) => cat))].forEach((cat, i) => {
+    const pool = COOLDOWNS[cat];
+    const pick = pool[(phaseIndex(week) + i) % pool.length];
+    if (!seen.has(pick[0])) { seen.add(pick[0]); cooldown.push(pick); }
+  });
+
+  return { label: tpl.label, exercises, warmup: "5 min warm-up: light cardio + arm/leg swings", cooldown };
 }
 
 /* ===== Meals: computed from the ingredient database ===== */

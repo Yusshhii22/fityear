@@ -365,6 +365,16 @@ footer.note { text-align: center; margin-top: 28px; }
   100% { transform: translate(var(--dx, 0px), -46vh) scale(1.15) rotate(20deg); opacity: 0; }
 }
 
+/* ---- Cool-down stretches ---- */
+.cooldown { margin-top: 8px; }
+.cdlist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cditem {
+  font-size: 0.75rem; font-weight: 600; color: var(--text);
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 99px; padding: 4px 11px;
+}
+.cditem em { font-style: normal; color: var(--muted); font-weight: 500; }
+
 /* ---- Page transitions ---- */
 #view.anim { animation: pageIn 0.3s ease both; }
 @keyframes pageIn {
