@@ -3,11 +3,18 @@
 const STORE = {
   profile: "fityear_profile",
   progress: "fityear_progress",
+  reminders: "fityear_reminders",
+};
+
+const DEFAULT_REMINDERS = {
+  workout: { on: false, time: "18:00" },
+  checkin: { on: true },
 };
 
 const state = {
   profile: load(STORE.profile),
   progress: load(STORE.progress) || { completed: {}, weights: {}, currentWeek: 1 },
+  reminders: Object.assign({}, DEFAULT_REMINDERS, load(STORE.reminders) || {}),
   ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
 };
 
@@ -37,14 +44,16 @@ function getTargets() {
 
 const LEVELS = ["Rookie", "Starter", "Regular", "Committed", "Disciplined", "Athlete", "Machine", "Beast", "Legend", "Icon"];
 const XP_PER_LEVEL = 300;
+const XP_CHECKIN = 50; // a monthly check-in is worth more than a weekly weigh-in
 
 function xpStats() {
   const done = Object.values(state.progress.completed).filter(Boolean).length;
   const lifts = Object.values(state.progress.lifts || {}).reduce((s, arr) => s + arr.length, 0);
   const weighIns = Object.keys(state.progress.weights || {}).length;
-  const xp = done * 25 + lifts * 5 + weighIns * 15;
+  const checkins = (state.progress.checkins || []).length;
+  const xp = done * 25 + lifts * 5 + weighIns * 15 + checkins * XP_CHECKIN;
   const level = Math.min(Math.floor(xp / XP_PER_LEVEL), LEVELS.length - 1);
-  return { done, lifts, weighIns, xp, level, levelName: LEVELS[level], toNext: Math.min(1, (xp % XP_PER_LEVEL) / XP_PER_LEVEL) };
+  return { done, lifts, weighIns, checkins, xp, level, levelName: LEVELS[level], toNext: Math.min(1, (xp % XP_PER_LEVEL) / XP_PER_LEVEL) };
 }
 
 function streaks() {
@@ -71,6 +80,9 @@ const BADGES = [
   { icon: "⚖️", name: "Data Driven", desc: "Do 4 weekly check-ins", test: (s) => s.weighIns >= 4 },
   { icon: "💪", name: "Half Century", desc: "Complete 50 days", test: (s) => s.done >= 50 },
   { icon: "🏆", name: "Century Club", desc: "Complete 100 days", test: (s) => s.done >= 100 },
+  { icon: "📸", name: "Checkpoint", desc: "Log your first monthly check-in", test: (s) => s.checkins >= 1 },
+  { icon: "📊", name: "Transformation", desc: "Log 3 monthly check-ins", test: (s) => s.checkins >= 3 },
+  { icon: "🗓️", name: "Year of You", desc: "Log 6 monthly check-ins", test: (s) => s.checkins >= 6 },
 ];
 
 function badgeState() {
@@ -92,6 +104,331 @@ function confetti() {
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 1400);
   }
+}
+
+/* ================= Monthly check-in ================= */
+// A "month" is a block of 4 program weeks (the journey is ~13 of them). Each
+// month you snapshot weight, tape measures, a photo and how you feel — richer
+// than the weekly weigh-in, worth more XP, and the source of the progress report.
+
+const MONTH_WEEKS = 4;
+const MONTHS_TOTAL = 13;
+const MEASURES = [
+  ["waist", "Waist"], ["chest", "Chest"], ["arms", "Arms"], ["thighs", "Thighs"],
+];
+const RATINGS = [
+  ["energy", "⚡", "Energy"], ["sleep", "😴", "Sleep"], ["motivation", "🔥", "Motivation"],
+];
+
+function monthOfWeek(week) { return Math.min(MONTHS_TOTAL, Math.max(1, Math.ceil(week / MONTH_WEEKS))); }
+function currentMonthNo() { return state.profile ? monthOfWeek(todayInfo().week) : 1; }
+function allCheckins() { return state.progress.checkins || []; }
+function getCheckin(m) { return allCheckins().find((c) => c.month === m) || null; }
+function lastCheckinBefore(m) {
+  const cs = allCheckins().filter((c) => c.month < m).sort((a, b) => a.month - b.month);
+  return cs[cs.length - 1] || null;
+}
+function checkinDue() {
+  return !!state.profile && state.reminders.checkin.on !== false && !getCheckin(currentMonthNo());
+}
+// Consecutive months with a check-in, ending at the most recent completed month.
+function checkinStreak() {
+  const done = new Set(allCheckins().map((c) => c.month));
+  let start = currentMonthNo();
+  if (!done.has(start)) start--; // current month still open — don't penalise it
+  let s = 0;
+  for (let m = start; m >= 1; m--) { if (done.has(m)) s++; else break; }
+  return s;
+}
+function daysDoneInMonth(m) {
+  const lo = (m - 1) * MONTH_WEEKS + 1, hi = m * MONTH_WEEKS;
+  let n = 0;
+  for (const k in state.progress.completed) {
+    if (!state.progress.completed[k]) continue;
+    const mt = /^w(\d+)d\d+$/.exec(k);
+    if (mt && +mt[1] >= lo && +mt[1] <= hi) n++;
+  }
+  return n;
+}
+
+// Downscale a chosen photo to a small JPEG data URL so a year of check-ins
+// stays well within localStorage limits (~40–70 KB each).
+function downscaleImage(file, max = 420) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+let ciForm = null; // transient form state while the modal is open
+
+function openMonthlyCheckin(month) {
+  closeCheckin();
+  const m = month || currentMonthNo();
+  const existing = getCheckin(m);
+  const prev = lastCheckinBefore(m);
+  const seed = existing || {};
+  // Prefill weight from the latest weigh-in / last check-in so it's one tap for most.
+  const lastWeight = seed.weight
+    || (Object.entries(state.progress.weights || {}).sort((a, b) => a[0] - b[0]).pop() || [])[1]
+    || (prev && prev.weight);
+  ciForm = {
+    energy: seed.energy || 0, sleep: seed.sleep || 0, motivation: seed.motivation || 0,
+    photo: seed.photo || null,
+  };
+
+  const modal = document.createElement("div");
+  modal.className = "tmodal";
+  modal.id = "checkinModal";
+  modal.innerHTML = `
+    <div class="tcard checkin-card">
+      <button class="tclose" aria-label="Close">✕</button>
+      <div class="ci-hero">
+        <div class="ci-badge">📸</div>
+        <h2>Month ${m} check-in</h2>
+        <p class="muted small">A 60-second snapshot of where you are. Future-you will love the receipts. <strong>+${XP_CHECKIN} XP</strong></p>
+      </div>
+
+      <label class="field big-field"><span>Body weight (kg)</span>
+        <input id="ciWeight" type="number" step="0.1" min="30" max="250" placeholder="e.g. 74" value="${lastWeight ?? ""}" /></label>
+
+      <div class="ci-section-label">📐 Tape measures <em>(optional)</em></div>
+      <div class="measure-grid">
+        ${MEASURES.map(([id, label]) => `
+          <label class="field"><span>${label} (cm)</span>
+            <input id="ci_${id}" type="number" step="0.1" min="10" max="250" placeholder="—" value="${seed[id] ?? ""}" /></label>`).join("")}
+      </div>
+
+      <div class="ci-section-label">💚 How did this month feel?</div>
+      <div id="ciRatings">${RATINGS.map(([id, emoji, label]) => ratingRow(id, emoji, label)).join("")}</div>
+
+      <div class="ci-section-label">📷 Progress photo <em>(optional, stays on your device)</em></div>
+      <div class="photo-drop" id="ciPhotoDrop">
+        ${ciForm.photo ? `<img src="${ciForm.photo}" alt="Progress photo" />` : `<span class="pd-hint">＋ Add a photo</span>`}
+        <input id="ciPhoto" type="file" accept="image/*" capture="environment" hidden />
+      </div>
+
+      <label class="field"><span>🏆 Biggest win this month</span>
+        <input id="ciWin" type="text" maxlength="120" placeholder="Squatted bodyweight! / Jeans fit again" value="${seed.win ? esc(seed.win) : ""}" /></label>
+      <label class="field"><span>🎯 One focus for next month</span>
+        <input id="ciFocus" type="text" maxlength="120" placeholder="Hit protein every day" value="${seed.focus ? esc(seed.focus) : ""}" /></label>
+
+      <button class="btn gold big" id="ciSubmit">${existing ? "Update check-in" : `Save check-in · +${XP_CHECKIN} XP`}</button>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal || e.target.closest(".tclose")) closeCheckin();
+  });
+  modal.querySelectorAll("[data-rate]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const id = b.dataset.rate;
+      ciForm[id] = ciForm[id] === +b.dataset.val ? 0 : +b.dataset.val; // tap again to clear
+      const row = b.closest(".ratedots");
+      row.querySelectorAll(".ratedot").forEach((d) => d.classList.toggle("on", +d.dataset.val <= ciForm[id]));
+    }));
+
+  const drop = modal.querySelector("#ciPhotoDrop");
+  const fileInput = modal.querySelector("#ciPhoto");
+  drop.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const f = fileInput.files[0];
+    if (!f) return;
+    try {
+      ciForm.photo = await downscaleImage(f);
+      drop.innerHTML = `<img src="${ciForm.photo}" alt="Progress photo" />`;
+      drop.appendChild(fileInput);
+    } catch { alert("Couldn't read that image — try another."); }
+  });
+
+  modal.querySelector("#ciSubmit").addEventListener("click", () => submitCheckin(m));
+}
+
+function ratingRow(id, emoji, label) {
+  const val = (ciForm && ciForm[id]) || 0;
+  const dots = [1, 2, 3, 4, 5].map((n) =>
+    `<button type="button" class="ratedot ${n <= val ? "on" : ""}" data-rate="${id}" data-val="${n}">${emoji}</button>`).join("");
+  return `<div class="raterow"><span class="ratelabel">${label}</span><span class="ratedots">${dots}</span></div>`;
+}
+
+function submitCheckin(m) {
+  const num = (id) => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? undefined : v; };
+  const weight = num("ciWeight");
+  if (!weight) { alert("Add your weight to save the check-in — the rest is optional."); document.getElementById("ciWeight").focus(); return; }
+
+  const before = badgeState().filter((b) => b.unlocked).map((b) => b.name);
+  const rec = {
+    month: m, week: todayInfo().week, date: new Date().toISOString().slice(0, 10),
+    weight,
+    win: (document.getElementById("ciWin").value || "").trim(),
+    focus: (document.getElementById("ciFocus").value || "").trim(),
+    energy: ciForm.energy || undefined, sleep: ciForm.sleep || undefined, motivation: ciForm.motivation || undefined,
+    photo: ciForm.photo || undefined,
+  };
+  MEASURES.forEach(([id]) => { const v = num("ci_" + id); if (v !== undefined) rec[id] = v; });
+
+  state.progress.checkins = allCheckins().filter((c) => c.month !== m);
+  state.progress.checkins.push(rec);
+  state.progress.checkins.sort((a, b) => a.month - b.month);
+  // Feed the weight into the weekly trend so calorie adaptation benefits too.
+  state.progress.weights[rec.week] = weight;
+  try {
+    save(STORE.progress, state.progress);
+  } catch (err) {
+    // Almost always a storage-quota trip from the photo — drop it and retry.
+    delete rec.photo;
+    try { save(STORE.progress, state.progress); alert("Saved — but the photo was too large to store, so it wasn't kept."); }
+    catch { alert("Couldn't save: device storage is full. Try removing old backups/photos."); return; }
+  }
+  runAdaptation();
+
+  const gained = badgeState().filter((b) => b.unlocked && !before.includes(b.name));
+  confetti(); setTimeout(confetti, 220);
+  showCheckinReport(rec, gained);
+}
+
+function showCheckinReport(rec, gained) {
+  const prev = lastCheckinBefore(rec.month);
+  const modal = document.getElementById("checkinModal") || (() => {
+    const d = document.createElement("div"); d.className = "tmodal"; d.id = "checkinModal";
+    document.body.appendChild(d); return d;
+  })();
+
+  const delta = (cur, was, unit, invertGood) => {
+    if (was == null || cur == null) return `<span class="dl-flat">—</span>`;
+    const d = +(cur - was).toFixed(1);
+    if (d === 0) return `<span class="dl-flat">±0${unit}</span>`;
+    const good = invertGood ? d < 0 : d > 0;
+    return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${d > 0 ? "▲ +" : "▼ "}${d}${unit}</span>`;
+  };
+  // Weight "good" direction depends on the goal.
+  const wGoodDown = state.profile.goal !== "gain";
+  const daysM = daysDoneInMonth(rec.month);
+  const strk = checkinStreak();
+
+  const measureRows = MEASURES.filter(([id]) => rec[id] != null || (prev && prev[id] != null)).map(([id, label]) => `
+    <div class="rep-mrow"><span>${label}</span><span>${rec[id] != null ? rec[id] + " cm" : "—"}</span>${delta(rec[id], prev && prev[id], " cm", true)}</div>`).join("");
+
+  const ratingBar = (id, emoji, label) => {
+    const v = rec[id]; if (!v) return "";
+    return `<div class="rep-rate"><span>${label}</span><span class="rr-dots">${"●".repeat(v)}${"○".repeat(5 - v)}</span><span>${emoji}</span></div>`;
+  };
+
+  modal.innerHTML = `
+    <div class="tcard report-card">
+      <button class="tclose" aria-label="Close">✕</button>
+      <div class="rep-hero">
+        <div class="rep-spark">✨</div>
+        <h2>Month ${rec.month} in the books</h2>
+        <p class="muted small">${strk > 1 ? `${strk}-month check-in streak 🔥 — that's how transformations happen.` : `Baseline locked in. Come back next month to watch it move.`}</p>
+      </div>
+
+      <div class="rep-stats">
+        <div class="rep-stat"><div class="rs-val">+${XP_CHECKIN}</div><div class="rs-lbl">XP earned</div></div>
+        <div class="rep-stat"><div class="rs-val">${daysM}</div><div class="rs-lbl">days trained</div></div>
+        <div class="rep-stat"><div class="rs-val">${rec.weight}<span class="rs-unit">kg</span></div><div class="rs-lbl">${prev ? delta(rec.weight, prev.weight, "", wGoodDown) : "baseline"}</div></div>
+        <div class="rep-stat"><div class="rs-val">${strk}</div><div class="rs-lbl">month streak</div></div>
+      </div>
+
+      ${measureRows ? `<div class="ci-section-label">📐 Measurements</div><div class="rep-measures">${measureRows}</div>` : ""}
+      ${RATINGS.some(([id]) => rec[id]) ? `<div class="ci-section-label">💚 Feel</div><div class="rep-rates">${RATINGS.map(([id, e, l]) => ratingBar(id, e, l)).join("")}</div>` : ""}
+
+      ${rec.photo || (prev && prev.photo) ? `
+        <div class="ci-section-label">📷 ${prev && prev.photo && rec.photo ? "Then → now" : "Progress photo"}</div>
+        <div class="rep-photos">
+          ${prev && prev.photo ? `<figure><img src="${prev.photo}" alt="Previous"/><figcaption>Month ${prev.month}</figcaption></figure>` : ""}
+          ${rec.photo ? `<figure><img src="${rec.photo}" alt="Now"/><figcaption>Month ${rec.month}</figcaption></figure>` : ""}
+        </div>` : ""}
+
+      ${rec.win ? `<div class="rep-quote">🏆 “${esc(rec.win)}”</div>` : ""}
+      ${rec.focus ? `<div class="rep-focus">🎯 Next month: <strong>${esc(rec.focus)}</strong></div>` : ""}
+
+      ${gained.length ? `<div class="rep-unlock">🎉 New badge${gained.length > 1 ? "s" : ""} unlocked: ${gained.map((b) => `${b.icon} ${b.name}`).join(" · ")}</div>` : ""}
+
+      <button class="btn gold big" id="repDone">Keep it going →</button>
+    </div>`;
+  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCheckin(); });
+  modal.querySelector("#repDone").addEventListener("click", () => { closeCheckin(); render(); });
+}
+
+function closeCheckin() { document.getElementById("checkinModal")?.remove(); ciForm = null; }
+
+// Inviting banner that pulls people into the check-in when one is due.
+function checkinBanner() {
+  if (!checkinDue()) return "";
+  const m = currentMonthNo();
+  return `
+    <button class="checkin-nudge" data-open-checkin="${m}">
+      <span class="cn-emoji">📸</span>
+      <span class="cn-body">
+        <strong>Month ${m} check-in is ready</strong>
+        <span class="small">Snapshot your progress · +${XP_CHECKIN} XP · unlock a badge</span>
+      </span>
+      <span class="cn-cta">Start →</span>
+    </button>`;
+}
+
+/* ================= Reminders ================= */
+// A pure client-side PWA can't reliably fire background alerts, so the always-on
+// mechanism is the in-app nudge banner. Notifications are a bonus that fire while
+// the app is open (or recently backgrounded) at the chosen time.
+
+let reminderTimers = [];
+
+function notifSupported() { return typeof Notification !== "undefined" && "serviceWorker" in navigator; }
+function notifGranted() { return notifSupported() && Notification.permission === "granted"; }
+
+async function showNotif(title, body) {
+  if (!notifGranted()) return;
+  const opts = { body, icon: "icon-192.png", badge: "icon-192.png", tag: "fityear", renotify: true };
+  try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, opts); }
+  catch { try { new Notification(title, opts); } catch { /* ignore */ } }
+}
+
+function msUntilToday(hhmm) {
+  const [h, mi] = (hhmm || "").split(":").map(Number);
+  if (isNaN(h)) return null;
+  const t = new Date(); t.setHours(h, mi || 0, 0, 0);
+  const diff = t - Date.now();
+  return diff > 1000 ? diff : null; // only future times today; tomorrow is caught on next open
+}
+
+function todayWorkoutDone() {
+  if (!state.profile) return true;
+  const t = todayInfo();
+  return !!state.progress.completed[`w${t.week}d${t.dayIdx}`];
+}
+
+function scheduleReminders() {
+  reminderTimers.forEach(clearTimeout);
+  reminderTimers = [];
+  if (!state.profile || !notifGranted()) return;
+  const r = state.reminders;
+  if (r.workout.on) {
+    const ms = msUntilToday(r.workout.time);
+    if (ms != null) reminderTimers.push(setTimeout(() => {
+      if (!todayWorkoutDone()) showNotif("Time to train 💪", `Day ${todayInfo().dayNum} is waiting — keep your 🔥 streak alive!`);
+      if (r.checkin.on && checkinDue()) showNotif("Monthly check-in ready 📸", `Snapshot your Month ${currentMonthNo()} progress and earn +${XP_CHECKIN} XP.`);
+    }, ms));
+  }
+}
+
+async function requestNotif() {
+  if (!notifSupported()) { alert("This browser doesn't support notifications."); return; }
+  try {
+    const p = await Notification.requestPermission();
+    if (p === "granted") { showNotif("Notifications on 🔔", "We'll nudge you at your reminder time while FitYear is open."); scheduleReminders(); }
+    if (state.ui.tab === "progress") renderProgress();
+  } catch { /* ignore */ }
 }
 
 /* ================= Today helpers ================= */
@@ -514,9 +851,11 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest(".exname");
   if (b) openTutorial(b.dataset.ex);
   if (e.target.closest(".helpbtn")) openHelp();
+  const ci = e.target.closest("[data-open-checkin]");
+  if (ci) openMonthlyCheckin(+ci.dataset.openCheckin);
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); }
+  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); closeCheckin(); }
 });
 
 /* ================= Shared blocks ================= */
@@ -674,6 +1013,8 @@ function renderToday() {
         ${p.role === "trainer" ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
       </div>
     </div>
+
+    ${checkinBanner()}
 
     <div class="card day-focus">
       <div class="df-head">
@@ -991,6 +1332,103 @@ function wireGrocery(week, targets) {
 
 /* ================= Progress tab ================= */
 
+function checkpointsCard() {
+  const cs = allCheckins();
+  const m = currentMonthNo();
+  const strk = checkinStreak();
+  const due = checkinDue();
+  const cta = due
+    ? `<button class="btn gold" data-open-checkin="${m}">📸 Check in for Month ${m} · +${XP_CHECKIN} XP</button>`
+    : `<button class="btn secondary" data-open-checkin="${m}">✓ Month ${m} done — view / edit</button>`;
+
+  if (!cs.length) {
+    return `
+      <div class="card ck-empty">
+        <div class="ck-empty-emoji">📸</div>
+        <div><strong>Take your Month 1 snapshot</strong>
+          <div class="muted small">Weight, tape measures, a photo and how you feel — your baseline to measure everything against. Takes a minute, earns +${XP_CHECKIN} XP.</div></div>
+        ${cta}
+      </div>`;
+  }
+
+  const rows = cs.slice().reverse().map((c) => {
+    const prev = lastCheckinBefore(c.month);
+    const wDelta = prev ? (() => {
+      const d = +(c.weight - prev.weight).toFixed(1);
+      if (d === 0) return `<span class="dl-flat">±0</span>`;
+      const good = state.profile.goal === "gain" ? d > 0 : d < 0;
+      return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${d > 0 ? "+" : ""}${d} kg</span>`;
+    })() : `<span class="dl-flat">baseline</span>`;
+    return `
+      <button class="ck-row" data-open-checkin="${c.month}">
+        ${c.photo ? `<img class="ck-thumb" src="${c.photo}" alt="" />` : `<span class="ck-thumb ck-noimg">📅</span>`}
+        <span class="ck-main">
+          <strong>Month ${c.month}</strong> <span class="muted small">· ${c.date}</span>
+          ${c.win ? `<span class="ck-win small">🏆 ${esc(c.win)}</span>` : ""}
+        </span>
+        <span class="ck-right"><span class="ck-w">${c.weight} kg</span>${wDelta}</span>
+      </button>`;
+  }).join("");
+
+  return `
+    <div class="card">
+      <div class="ck-head">
+        <div class="ck-streak"><span class="ck-streak-num">${strk}</span><span class="muted small">month${strk === 1 ? "" : "s"} in a row</span></div>
+        ${cta}
+      </div>
+      <div class="ck-list">${rows}</div>
+    </div>`;
+}
+
+function remindersCard() {
+  const r = state.reminders;
+  const perm = notifSupported() ? Notification.permission : "unsupported";
+  const status = {
+    granted: `<span class="rem-ok">🔔 Notifications on</span>`,
+    denied: `<span class="rem-off">Notifications blocked in your browser settings</span>`,
+    default: `<button class="btn secondary tiny" id="enableNotifBtn">Enable notifications</button>`,
+    unsupported: `<span class="muted small">Notifications aren't supported on this browser</span>`,
+  }[perm];
+
+  const toggle = (id, on, label, sub) => `
+    <label class="rem-toggle">
+      <input type="checkbox" id="${id}" ${on ? "checked" : ""} />
+      <span class="rem-switch"></span>
+      <span class="rem-text"><strong>${label}</strong><span class="muted small">${sub}</span></span>
+    </label>`;
+
+  return `
+    <div class="card">
+      ${toggle("remCheckin", r.checkin.on, "Monthly check-in nudge", "Shows a check-in card on Today when a new month is due")}
+      ${toggle("remWorkout", r.workout.on, "Daily workout reminder", "A heads-up if today's session isn't done yet")}
+      <div class="rem-timerow ${r.workout.on ? "" : "hidden"}" id="remTimeRow">
+        <span class="muted small">Remind me at</span>
+        <input type="time" id="remWorkoutTime" value="${r.workout.time}" />
+      </div>
+      <div class="rem-status">${status}</div>
+      <div class="muted small mt4">Reminders always appear inside the app. Phone alerts fire while FitYear is open — installed web apps can't reliably alert in the background, so the in-app nudges are your dependable reminder.</div>
+    </div>`;
+}
+
+function wireReminders() {
+  const rerender = () => { save(STORE.reminders, state.reminders); renderProgress(); };
+  document.getElementById("remCheckin")?.addEventListener("change", (e) => {
+    state.reminders.checkin.on = e.target.checked; rerender();
+  });
+  document.getElementById("remWorkout")?.addEventListener("change", (e) => {
+    state.reminders.workout.on = e.target.checked;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+    renderProgress();
+  });
+  document.getElementById("remWorkoutTime")?.addEventListener("change", (e) => {
+    state.reminders.workout.time = e.target.value;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+  });
+  document.getElementById("enableNotifBtn")?.addEventListener("click", requestNotif);
+}
+
 function renderProgress() {
   const p = state.profile;
   const targets = getTargets();
@@ -1005,6 +1443,8 @@ function renderProgress() {
 
   $view().innerHTML = `
     <div class="pagehead"><h1>📈 Progress</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+
+    ${checkinBanner()}
 
     <div class="levelcard card">
       <div class="lc-row">
@@ -1035,6 +1475,9 @@ function renderProgress() {
         </div>`).join("")}
     </div>
 
+    <h2 class="section-title">🗓️ Monthly checkpoints</h2>
+    ${checkpointsCard()}
+
     <h2 class="section-title">⚖️ Weekly check-in</h2>
     <div class="card">
       <div class="muted small">Log your weight once a week (same day, morning, empty stomach). Your calorie target auto-adjusts based on your trend.</div>
@@ -1054,6 +1497,9 @@ function renderProgress() {
         : `<div class="muted">Log top sets on at least two workouts for an exercise (from Today or Plan) and its progression chart appears here.</div>`}
     </div>
 
+    <h2 class="section-title">🔔 Reminders</h2>
+    ${remindersCard()}
+
     <h2 class="section-title">⚙️ Data & profile</h2>
     <div class="card">
       <div class="topbar-actions">
@@ -1068,6 +1514,8 @@ function renderProgress() {
 
   document.querySelectorAll(".chip[data-ex]").forEach((c) =>
     c.addEventListener("click", () => { state.ui.chartEx = c.dataset.ex; renderProgress(); }));
+
+  wireReminders();
 
   document.getElementById("saveWeight").addEventListener("click", () => {
     const v = parseFloat(document.getElementById("weightInput").value);
@@ -1090,7 +1538,7 @@ function renderProgress() {
   document.getElementById("exportBtn").addEventListener("click", () => {
     const data = {
       app: "FitYear", version: 2, exportedAt: new Date().toISOString(),
-      profile: state.profile, progress: state.progress,
+      profile: state.profile, progress: state.progress, reminders: state.reminders,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -1114,6 +1562,7 @@ function renderProgress() {
         if (!confirm(`Restore backup for "${data.profile.name}" (saved ${when})? This replaces your current data.`)) return;
         state.profile = data.profile;
         state.progress = data.progress;
+        if (data.reminders) { state.reminders = Object.assign({}, DEFAULT_REMINDERS, data.reminders); save(STORE.reminders, state.reminders); }
         save(STORE.profile, state.profile);
         save(STORE.progress, state.progress);
         render();
@@ -1342,7 +1791,9 @@ const HELP_SECTIONS = [
   ["🛒", "Grocery", "A checkable shopping list covering every meal of the selected week — printable too."],
   ["💊", "Supplements", "Your personalized stack with doses and best timing lives in Plan → Supplements; tick them off daily on Today."],
   ["⚖️", "Weekly check-in", "Log your weight once a week in Progress. The coach compares your trend to the healthy rate and auto-adjusts your calories."],
-  ["🏅", "XP, streaks & badges", "Completed days, logged sets and check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 8 badges."],
+  ["📸", "Monthly check-in", "Once a month, snapshot your weight, tape measures, a photo and how you feel. You get a progress report comparing it to last time, +50 XP and badges. Find it on Today's nudge or Progress → Monthly checkpoints."],
+  ["🔔", "Reminders", "In Progress → Reminders, switch on the monthly check-in nudge and a daily workout reminder (pick a time). In-app nudges always work; enable notifications for phone alerts while the app is open."],
+  ["🏅", "XP, streaks & badges", "Completed days, logged sets, weigh-ins and monthly check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 11 badges."],
   ["💾", "Backup & privacy", "Everything stays on your device. Use Backup/Restore in Progress to move your data to a new phone."],
 ];
 
@@ -1379,3 +1830,8 @@ function esc(s) {
 render();
 // Show the guided tour once — for brand-new plans and for existing users after this update.
 if (state.profile && !state.ui.editingProfile && !state.progress.tourDone) setTimeout(startTour, 400);
+
+// Arm local reminders for this session, and re-arm when the app comes back to
+// the foreground (a new day may have started, or a scheduled time passed).
+scheduleReminders();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleReminders(); });
