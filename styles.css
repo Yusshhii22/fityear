@@ -309,6 +309,32 @@ svg.chart { width: 100%; height: 130px; }
 .insight.tone-win { border-left-color: var(--green, #3ddc84); }
 .insight.tone-tip { border-left-color: var(--accent); }
 .insight.tone-warn { border-left-color: var(--gold); }
+.coach-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.coach-head h3 { margin: 0; }
+.coach-head .btn { margin: 0; flex: none; }
+
+/* ---- Conversational coach chat ---- */
+.coach-chat { display: flex; flex-direction: column; max-height: 86vh; }
+.coach-chat h2 { margin-bottom: 12px; }
+.chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding: 4px 2px; min-height: 220px; }
+.chat-empty { color: var(--muted); font-size: 0.875rem; margin: auto 0; }
+.chat-suggests { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.bubble {
+  max-width: 85%; padding: 10px 13px; border-radius: 16px; font-size: 0.9rem; line-height: 1.45;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.bubble.me { align-self: flex-end; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: #fff; border-bottom-right-radius: 5px; }
+.bubble.coach { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.bubble.pending { opacity: 0.6; font-style: italic; }
+.chat-input { display: flex; gap: 8px; margin-top: 10px; }
+.chat-input input { flex: 1; }
+.chat-input .btn { margin: 0; flex: none; width: auto; }
+.chat-foot { margin-top: 8px; text-align: center; }
+.linkbtn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+.coach-setup .coach-steps { margin: 8px 0 12px 18px; }
+.coach-setup .coach-steps li { margin-bottom: 6px; }
+.coach-setup code { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; font-size: 0.85em; }
+.coach-setup .btn.ghost { margin-top: 8px; }
 
 /* ---- Milestones ---- */
 .milestone { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 0.875rem; }

@@ -4,6 +4,7 @@ const STORE = {
   profile: "fityear_profile",
   progress: "fityear_progress",
   reminders: "fityear_reminders",
+  coach: "fityear_coach",
 };
 
 const DEFAULT_REMINDERS = {
@@ -25,8 +26,12 @@ const state = {
   profile: load(STORE.profile),
   progress: load(STORE.progress) || { completed: {}, weights: {}, currentWeek: 1 },
   reminders: normalizeReminders(load(STORE.reminders)),
+  coach: load(STORE.coach) || { endpoint: "" },
   ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
 };
+
+// Conversational Coach chat history (kept in memory only — not persisted).
+let coachChat = [];
 
 function load(key) {
   try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
@@ -950,6 +955,7 @@ document.addEventListener("click", (e) => {
   if (e.target.closest(".helpbtn")) openHelp();
   const ci = e.target.closest("[data-open-checkin]");
   if (ci) openMonthlyCheckin(+ci.dataset.openCheckin);
+  if (e.target.closest("[data-open-coach]")) openCoachChat();
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); closeCheckin(); }
@@ -1587,9 +1593,12 @@ function renderProgress() {
     </div>
 
     <h2 class="section-title">🧠 Smart coach</h2>
-    ${coachInsights().length
-      ? `<div class="card coach-card">${coachInsights().map(insightCard).join("")}</div>`
-      : `<div class="card muted small">Log a few workouts, weigh-ins and a monthly check-in — your coach will start spotting patterns and prescribing your next move here.</div>`}
+    <div class="card coach-card">
+      <div class="coach-head"><h3>Your coach</h3><button class="btn tiny secondary" data-open-coach>💬 Ask coach</button></div>
+      ${coachInsights().length
+        ? coachInsights().map(insightCard).join("")
+        : `<div class="muted small">Log a few workouts, weigh-ins and a monthly check-in and your coach will start spotting patterns here. You can also tap <strong>Ask coach</strong> anytime.</div>`}
+    </div>
 
     <h2 class="section-title">🏅 Badges</h2>
     <div class="badges">
@@ -1844,7 +1853,142 @@ function coachCard(limit) {
   const ins = coachInsights();
   if (!ins.length) return "";
   const list = limit ? ins.slice(0, limit) : ins;
-  return `<div class="card coach-card"><h3>🧠 Your coach</h3>${list.map(insightCard).join("")}</div>`;
+  return `
+    <div class="card coach-card">
+      <div class="coach-head"><h3>🧠 Your coach</h3><button class="btn tiny secondary" data-open-coach>💬 Ask</button></div>
+      ${list.map(insightCard).join("")}
+    </div>`;
+}
+
+/* ---- Conversational Coach (Claude via your serverless proxy) ---- */
+
+// Compact, grounding snapshot sent to the proxy so Claude reasons over real data.
+function buildCoachContext() {
+  const p = state.profile, t = todayInfo(), ph = phaseForWeek(t.week), tg = getTargets();
+  const weights = Object.entries(state.progress.weights || {}).map(([w, kg]) => [+w, +kg]).sort((a, b) => a[0] - b[0]);
+  const lastCheck = allCheckins()[allCheckins().length - 1] || null;
+  const x = xpStats(), st = streaks();
+  return {
+    profile: {
+      name: p.name, age: p.age, sex: p.sex, heightCm: p.height, weightKg: p.weight,
+      goal: p.goal, experience: p.experience, daysPerWeek: p.days, equipment: p.equipment, diet: p.diet,
+    },
+    today: { day: t.dayNum, week: t.week, phase: ph && ph.name },
+    targets: { calories: tg.calories, proteinG: tg.protein, calorieAdjust: state.progress.calorieDelta || 0 },
+    weightTrend: weights.length ? { start: weights[0][1], latest: weights[weights.length - 1][1], points: weights.slice(-6) } : null,
+    lastMonthlyCheckin: lastCheck && {
+      month: lastCheck.month, weight: lastCheck.weight, energy: lastCheck.energy, sleep: lastCheck.sleep,
+      motivation: lastCheck.motivation, win: lastCheck.win, focus: lastCheck.focus,
+    },
+    gamification: { level: x.level + 1, levelName: x.levelName, currentStreak: st.current, daysDone: x.done },
+    coachInsights: coachInsights().map((i) => `${i.title}: ${i.text}`),
+  };
+}
+
+function openCoachChat() {
+  document.getElementById("coachModal")?.remove();
+  const modal = document.createElement("div");
+  modal.className = "tmodal";
+  modal.id = "coachModal";
+  modal.innerHTML = `
+    <div class="tcard coach-chat">
+      <button class="tclose" aria-label="Close">✕</button>
+      <h2>💬 Coach</h2>
+      <div id="coachBody"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCoach(); });
+  renderCoachBody();
+}
+function closeCoach() { document.getElementById("coachModal")?.remove(); }
+
+function renderCoachBody() {
+  const body = document.getElementById("coachBody");
+  if (!body) return;
+  if (!state.coach.endpoint) { renderCoachSetup(body); return; }
+
+  body.innerHTML = `
+    <div class="chat-log" id="chatLog">
+      ${coachChat.length ? coachChat.map(chatBubble).join("")
+        : `<div class="chat-empty">Ask me anything about your training, nutrition or recovery — I can see your plan and progress. Try:
+             <div class="chat-suggests">
+               <button class="chip" data-ask="Why am I not losing weight?">Why am I not losing weight?</button>
+               <button class="chip" data-ask="What should I focus on this week?">Focus this week?</button>
+               <button class="chip" data-ask="How do I break my plateau?">Break my plateau</button>
+             </div></div>`}
+    </div>
+    <form class="chat-input" id="chatForm">
+      <input id="chatText" type="text" autocomplete="off" placeholder="Ask your coach…" />
+      <button class="btn tiny" type="submit" id="chatSend">Send</button>
+    </form>
+    <div class="chat-foot muted small">Powered by Claude via your own proxy · <button class="linkbtn" id="coachSettingsBtn">settings</button></div>`;
+
+  const log = document.getElementById("chatLog");
+  log.scrollTop = log.scrollHeight;
+  document.getElementById("chatForm").addEventListener("submit", (e) => { e.preventDefault(); sendCoachMessage(document.getElementById("chatText").value); });
+  body.querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => sendCoachMessage(b.dataset.ask)));
+  document.getElementById("coachSettingsBtn").addEventListener("click", () => renderCoachSetup(body));
+}
+
+function chatBubble(m) {
+  return `<div class="bubble ${m.role === "user" ? "me" : "coach"} ${m.pending ? "pending" : ""}">${m.role === "user" ? esc(m.content) : formatCoachReply(m.content)}</div>`;
+}
+// Light formatting: preserve line breaks, escape everything else.
+function formatCoachReply(t) { return esc(t).replace(/\n/g, "<br>"); }
+
+async function sendCoachMessage(text) {
+  text = (text || "").trim();
+  if (!text || !state.coach.endpoint) return;
+  coachChat.push({ role: "user", content: text });
+  coachChat.push({ role: "assistant", content: "…", pending: true });
+  renderCoachBody();
+  const input = document.getElementById("chatText"); if (input) input.value = "";
+
+  try {
+    const res = await fetch(state.coach.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: coachChat.filter((m) => !m.pending).map((m) => ({ role: m.role, content: m.content })),
+        context: buildCoachContext(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    coachChat = coachChat.filter((m) => !m.pending);
+    if (!res.ok || data.error) coachChat.push({ role: "assistant", content: `⚠️ ${data.error || "Coach unavailable (" + res.status + ")."}` });
+    else coachChat.push({ role: "assistant", content: data.reply || "(No reply.)" });
+  } catch (e) {
+    coachChat = coachChat.filter((m) => !m.pending);
+    coachChat.push({ role: "assistant", content: "⚠️ Couldn't reach your coach endpoint. Check the URL in settings and that it's online." });
+  }
+  renderCoachBody();
+}
+
+function renderCoachSetup(body) {
+  body.innerHTML = `
+    <div class="coach-setup">
+      <p class="muted small">The chat coach is powered by Claude. Because an API key can't live safely in the app, you run a tiny free proxy that holds the key. One-time setup (~5 min) — see <strong>coach-worker/README.md</strong> in the project.</p>
+      <ol class="coach-steps small">
+        <li>Deploy the Cloudflare Worker in <code>coach-worker/</code> and set your <code>ANTHROPIC_API_KEY</code>.</li>
+        <li>Copy the Worker URL it prints.</li>
+        <li>Paste it below.</li>
+      </ol>
+      <label class="field"><span>Coach proxy URL</span>
+        <input id="coachEndpoint" type="url" placeholder="https://fityear-coach.you.workers.dev" value="${esc(state.coach.endpoint || "")}" /></label>
+      <button class="btn gold" id="coachSave">Save & connect</button>
+      ${state.coach.endpoint ? `<button class="btn ghost" id="coachClear">Disconnect</button>` : ""}
+      <div class="muted small mt4">Your profile & progress summary (no photos) are sent to your proxy to answer. Until connected, the on-device Smart Coach still works offline.</div>
+    </div>`;
+  document.getElementById("coachSave").addEventListener("click", () => {
+    const url = (document.getElementById("coachEndpoint").value || "").trim();
+    if (url && !/^https?:\/\//.test(url)) { alert("Enter a full URL starting with https://"); return; }
+    state.coach.endpoint = url;
+    save(STORE.coach, state.coach);
+    renderCoachBody();
+  });
+  document.getElementById("coachClear")?.addEventListener("click", () => {
+    state.coach.endpoint = ""; save(STORE.coach, state.coach); coachChat = []; renderCoachBody();
+  });
 }
 
 /* ---- Charts (inline SVG) ---- */
@@ -2018,6 +2162,7 @@ const HELP_SECTIONS = [
   ["💊", "Supplements", "Your personalized stack with doses and best timing lives in Plan → Supplements; tick them off daily on Today."],
   ["⚖️", "Weekly check-in", "Log your weight once a week in Progress. The coach compares your trend to the healthy rate and auto-adjusts your calories."],
   ["🧠", "Smart coach", "On-device agents read your logged sets, weight trend, check-ins and adherence to prescribe your next move — when to add weight, when a plateau needs a change, when to prioritise recovery. Insights appear on Today and in Progress → Smart coach."],
+  ["💬", "Ask coach (AI chat)", "Tap 'Ask coach' to chat with a Claude-powered coach that reasons over your real plan and progress. It's optional and needs a one-time free proxy setup (see coach-worker/README) so your API key stays private — until then, the on-device Smart coach still works."],
   ["📸", "Monthly check-in", "Once a month, snapshot your weight, tape measures, a photo and how you feel. You get a progress report comparing it to last time, +50 XP and badges. Find it on Today's nudge or Progress → Monthly checkpoints."],
   ["🔔", "Reminders", "In Progress → Reminders, switch on the monthly check-in nudge and a daily workout reminder (pick a time). In-app nudges always work; enable notifications for phone alerts while the app is open."],
   ["🏅", "XP, streaks & badges", "Completed days, logged sets, weigh-ins and monthly check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 11 badges."],

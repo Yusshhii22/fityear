@@ -1,6 +1,6 @@
 ﻿// FitYear service worker — network-first for the app shell so deploys show up
 // immediately, cache fallback so the app still works fully offline.
-const CACHE = "fityear-v21";
+const CACHE = "fityear-v22";
 const ASSETS = [
   "./", "index.html", "styles.css", "data.js", "tutorials.js", "planner.js", "app.js",
   "manifest.json", "icon.svg", "icon-192.png", "icon-512.png", "fonts/manrope.woff2",

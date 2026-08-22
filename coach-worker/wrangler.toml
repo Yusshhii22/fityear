@@ -1,0 +1,9 @@
+name = "fityear-coach"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Non-secret config (optional). The API key is a SECRET — set it with:
+#   wrangler secret put ANTHROPIC_API_KEY
+[vars]
+MODEL = "claude-opus-5"
+# ALLOWED_ORIGIN = "https://yourname.github.io"
