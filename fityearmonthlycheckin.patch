@@ -1,0 +1,790 @@
+From e33582958f6e41f0a1b59ac5b351a2ebc55252d0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 11 Aug 2026 11:37:12 +0000
+Subject: [PATCH] Add gamified monthly check-in, progress report & reminders
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Monthly check-in modal: weight, optional tape measures, progress photo
+  (downscaled to stay within localStorage), and energy/sleep/motivation
+  emoji ratings, plus "biggest win" and "next focus". Worth +50 XP.
+- Progress report card on submit: deltas vs last check-in (weight,
+  measurements), days trained, month streak, ratings, then/now photos,
+  and any newly unlocked badges — with a confetti celebration.
+- Monthly checkpoints section + timeline in Progress, with an inviting
+  "check-in is ready" nudge banner on Today when a new month is due.
+- Reminders card: monthly check-in nudge + daily workout reminder with a
+  time, notification permission, and local scheduling while the app is
+  open. In-app nudges are the always-reliable fallback.
+- 3 new badges (Checkpoint, Transformation, Year of You), help entries,
+  backup/restore of reminder prefs, and SW cache bump to v19 with a
+  notificationclick handler.
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012CP1UTksR59o5tcnbbPGxp
+---
+ app.js     | 466 ++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ styles.css | 131 +++++++++++++++
+ sw.js      |  13 +-
+ 3 files changed, 604 insertions(+), 6 deletions(-)
+
+diff --git a/app.js b/app.js
+index b48a55c..2b77d22 100644
+--- a/app.js
++++ b/app.js
+@@ -3,11 +3,18 @@
+ const STORE = {
+   profile: "fityear_profile",
+   progress: "fityear_progress",
++  reminders: "fityear_reminders",
++};
++
++const DEFAULT_REMINDERS = {
++  workout: { on: false, time: "18:00" },
++  checkin: { on: true },
+ };
+ 
+ const state = {
+   profile: load(STORE.profile),
+   progress: load(STORE.progress) || { completed: {}, weights: {}, currentWeek: 1 },
++  reminders: Object.assign({}, DEFAULT_REMINDERS, load(STORE.reminders) || {}),
+   ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
+ };
+ 
+@@ -37,14 +44,16 @@ function getTargets() {
+ 
+ const LEVELS = ["Rookie", "Starter", "Regular", "Committed", "Disciplined", "Athlete", "Machine", "Beast", "Legend", "Icon"];
+ const XP_PER_LEVEL = 300;
++const XP_CHECKIN = 50; // a monthly check-in is worth more than a weekly weigh-in
+ 
+ function xpStats() {
+   const done = Object.values(state.progress.completed).filter(Boolean).length;
+   const lifts = Object.values(state.progress.lifts || {}).reduce((s, arr) => s + arr.length, 0);
+   const weighIns = Object.keys(state.progress.weights || {}).length;
+-  const xp = done * 25 + lifts * 5 + weighIns * 15;
++  const checkins = (state.progress.checkins || []).length;
++  const xp = done * 25 + lifts * 5 + weighIns * 15 + checkins * XP_CHECKIN;
+   const level = Math.min(Math.floor(xp / XP_PER_LEVEL), LEVELS.length - 1);
+-  return { done, lifts, weighIns, xp, level, levelName: LEVELS[level], toNext: Math.min(1, (xp % XP_PER_LEVEL) / XP_PER_LEVEL) };
++  return { done, lifts, weighIns, checkins, xp, level, levelName: LEVELS[level], toNext: Math.min(1, (xp % XP_PER_LEVEL) / XP_PER_LEVEL) };
+ }
+ 
+ function streaks() {
+@@ -71,6 +80,9 @@ const BADGES = [
+   { icon: "⚖️", name: "Data Driven", desc: "Do 4 weekly check-ins", test: (s) => s.weighIns >= 4 },
+   { icon: "💪", name: "Half Century", desc: "Complete 50 days", test: (s) => s.done >= 50 },
+   { icon: "🏆", name: "Century Club", desc: "Complete 100 days", test: (s) => s.done >= 100 },
++  { icon: "📸", name: "Checkpoint", desc: "Log your first monthly check-in", test: (s) => s.checkins >= 1 },
++  { icon: "📊", name: "Transformation", desc: "Log 3 monthly check-ins", test: (s) => s.checkins >= 3 },
++  { icon: "🗓️", name: "Year of You", desc: "Log 6 monthly check-ins", test: (s) => s.checkins >= 6 },
+ ];
+ 
+ function badgeState() {
+@@ -94,6 +106,331 @@ function confetti() {
+   }
+ }
+ 
++/* ================= Monthly check-in ================= */
++// A "month" is a block of 4 program weeks (the journey is ~13 of them). Each
++// month you snapshot weight, tape measures, a photo and how you feel — richer
++// than the weekly weigh-in, worth more XP, and the source of the progress report.
++
++const MONTH_WEEKS = 4;
++const MONTHS_TOTAL = 13;
++const MEASURES = [
++  ["waist", "Waist"], ["chest", "Chest"], ["arms", "Arms"], ["thighs", "Thighs"],
++];
++const RATINGS = [
++  ["energy", "⚡", "Energy"], ["sleep", "😴", "Sleep"], ["motivation", "🔥", "Motivation"],
++];
++
++function monthOfWeek(week) { return Math.min(MONTHS_TOTAL, Math.max(1, Math.ceil(week / MONTH_WEEKS))); }
++function currentMonthNo() { return state.profile ? monthOfWeek(todayInfo().week) : 1; }
++function allCheckins() { return state.progress.checkins || []; }
++function getCheckin(m) { return allCheckins().find((c) => c.month === m) || null; }
++function lastCheckinBefore(m) {
++  const cs = allCheckins().filter((c) => c.month < m).sort((a, b) => a.month - b.month);
++  return cs[cs.length - 1] || null;
++}
++function checkinDue() {
++  return !!state.profile && state.reminders.checkin.on !== false && !getCheckin(currentMonthNo());
++}
++// Consecutive months with a check-in, ending at the most recent completed month.
++function checkinStreak() {
++  const done = new Set(allCheckins().map((c) => c.month));
++  let start = currentMonthNo();
++  if (!done.has(start)) start--; // current month still open — don't penalise it
++  let s = 0;
++  for (let m = start; m >= 1; m--) { if (done.has(m)) s++; else break; }
++  return s;
++}
++function daysDoneInMonth(m) {
++  const lo = (m - 1) * MONTH_WEEKS + 1, hi = m * MONTH_WEEKS;
++  let n = 0;
++  for (const k in state.progress.completed) {
++    if (!state.progress.completed[k]) continue;
++    const mt = /^w(\d+)d\d+$/.exec(k);
++    if (mt && +mt[1] >= lo && +mt[1] <= hi) n++;
++  }
++  return n;
++}
++
++// Downscale a chosen photo to a small JPEG data URL so a year of check-ins
++// stays well within localStorage limits (~40–70 KB each).
++function downscaleImage(file, max = 420) {
++  return new Promise((resolve, reject) => {
++    const img = new Image();
++    img.onload = () => {
++      const scale = Math.min(1, max / Math.max(img.width, img.height));
++      const c = document.createElement("canvas");
++      c.width = Math.round(img.width * scale);
++      c.height = Math.round(img.height * scale);
++      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
++      resolve(c.toDataURL("image/jpeg", 0.72));
++    };
++    img.onerror = reject;
++    img.src = URL.createObjectURL(file);
++  });
++}
++
++let ciForm = null; // transient form state while the modal is open
++
++function openMonthlyCheckin(month) {
++  closeCheckin();
++  const m = month || currentMonthNo();
++  const existing = getCheckin(m);
++  const prev = lastCheckinBefore(m);
++  const seed = existing || {};
++  // Prefill weight from the latest weigh-in / last check-in so it's one tap for most.
++  const lastWeight = seed.weight
++    || (Object.entries(state.progress.weights || {}).sort((a, b) => a[0] - b[0]).pop() || [])[1]
++    || (prev && prev.weight);
++  ciForm = {
++    energy: seed.energy || 0, sleep: seed.sleep || 0, motivation: seed.motivation || 0,
++    photo: seed.photo || null,
++  };
++
++  const modal = document.createElement("div");
++  modal.className = "tmodal";
++  modal.id = "checkinModal";
++  modal.innerHTML = `
++    <div class="tcard checkin-card">
++      <button class="tclose" aria-label="Close">✕</button>
++      <div class="ci-hero">
++        <div class="ci-badge">📸</div>
++        <h2>Month ${m} check-in</h2>
++        <p class="muted small">A 60-second snapshot of where you are. Future-you will love the receipts. <strong>+${XP_CHECKIN} XP</strong></p>
++      </div>
++
++      <label class="field big-field"><span>Body weight (kg)</span>
++        <input id="ciWeight" type="number" step="0.1" min="30" max="250" placeholder="e.g. 74" value="${lastWeight ?? ""}" /></label>
++
++      <div class="ci-section-label">📐 Tape measures <em>(optional)</em></div>
++      <div class="measure-grid">
++        ${MEASURES.map(([id, label]) => `
++          <label class="field"><span>${label} (cm)</span>
++            <input id="ci_${id}" type="number" step="0.1" min="10" max="250" placeholder="—" value="${seed[id] ?? ""}" /></label>`).join("")}
++      </div>
++
++      <div class="ci-section-label">💚 How did this month feel?</div>
++      <div id="ciRatings">${RATINGS.map(([id, emoji, label]) => ratingRow(id, emoji, label)).join("")}</div>
++
++      <div class="ci-section-label">📷 Progress photo <em>(optional, stays on your device)</em></div>
++      <div class="photo-drop" id="ciPhotoDrop">
++        ${ciForm.photo ? `<img src="${ciForm.photo}" alt="Progress photo" />` : `<span class="pd-hint">＋ Add a photo</span>`}
++        <input id="ciPhoto" type="file" accept="image/*" capture="environment" hidden />
++      </div>
++
++      <label class="field"><span>🏆 Biggest win this month</span>
++        <input id="ciWin" type="text" maxlength="120" placeholder="Squatted bodyweight! / Jeans fit again" value="${seed.win ? esc(seed.win) : ""}" /></label>
++      <label class="field"><span>🎯 One focus for next month</span>
++        <input id="ciFocus" type="text" maxlength="120" placeholder="Hit protein every day" value="${seed.focus ? esc(seed.focus) : ""}" /></label>
++
++      <button class="btn gold big" id="ciSubmit">${existing ? "Update check-in" : `Save check-in · +${XP_CHECKIN} XP`}</button>
++    </div>`;
++  document.body.appendChild(modal);
++
++  modal.addEventListener("click", (e) => {
++    if (e.target === modal || e.target.closest(".tclose")) closeCheckin();
++  });
++  modal.querySelectorAll("[data-rate]").forEach((b) =>
++    b.addEventListener("click", () => {
++      const id = b.dataset.rate;
++      ciForm[id] = ciForm[id] === +b.dataset.val ? 0 : +b.dataset.val; // tap again to clear
++      const row = b.closest(".ratedots");
++      row.querySelectorAll(".ratedot").forEach((d) => d.classList.toggle("on", +d.dataset.val <= ciForm[id]));
++    }));
++
++  const drop = modal.querySelector("#ciPhotoDrop");
++  const fileInput = modal.querySelector("#ciPhoto");
++  drop.addEventListener("click", () => fileInput.click());
++  fileInput.addEventListener("change", async () => {
++    const f = fileInput.files[0];
++    if (!f) return;
++    try {
++      ciForm.photo = await downscaleImage(f);
++      drop.innerHTML = `<img src="${ciForm.photo}" alt="Progress photo" />`;
++      drop.appendChild(fileInput);
++    } catch { alert("Couldn't read that image — try another."); }
++  });
++
++  modal.querySelector("#ciSubmit").addEventListener("click", () => submitCheckin(m));
++}
++
++function ratingRow(id, emoji, label) {
++  const val = (ciForm && ciForm[id]) || 0;
++  const dots = [1, 2, 3, 4, 5].map((n) =>
++    `<button type="button" class="ratedot ${n <= val ? "on" : ""}" data-rate="${id}" data-val="${n}">${emoji}</button>`).join("");
++  return `<div class="raterow"><span class="ratelabel">${label}</span><span class="ratedots">${dots}</span></div>`;
++}
++
++function submitCheckin(m) {
++  const num = (id) => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? undefined : v; };
++  const weight = num("ciWeight");
++  if (!weight) { alert("Add your weight to save the check-in — the rest is optional."); document.getElementById("ciWeight").focus(); return; }
++
++  const before = badgeState().filter((b) => b.unlocked).map((b) => b.name);
++  const rec = {
++    month: m, week: todayInfo().week, date: new Date().toISOString().slice(0, 10),
++    weight,
++    win: (document.getElementById("ciWin").value || "").trim(),
++    focus: (document.getElementById("ciFocus").value || "").trim(),
++    energy: ciForm.energy || undefined, sleep: ciForm.sleep || undefined, motivation: ciForm.motivation || undefined,
++    photo: ciForm.photo || undefined,
++  };
++  MEASURES.forEach(([id]) => { const v = num("ci_" + id); if (v !== undefined) rec[id] = v; });
++
++  state.progress.checkins = allCheckins().filter((c) => c.month !== m);
++  state.progress.checkins.push(rec);
++  state.progress.checkins.sort((a, b) => a.month - b.month);
++  // Feed the weight into the weekly trend so calorie adaptation benefits too.
++  state.progress.weights[rec.week] = weight;
++  try {
++    save(STORE.progress, state.progress);
++  } catch (err) {
++    // Almost always a storage-quota trip from the photo — drop it and retry.
++    delete rec.photo;
++    try { save(STORE.progress, state.progress); alert("Saved — but the photo was too large to store, so it wasn't kept."); }
++    catch { alert("Couldn't save: device storage is full. Try removing old backups/photos."); return; }
++  }
++  runAdaptation();
++
++  const gained = badgeState().filter((b) => b.unlocked && !before.includes(b.name));
++  confetti(); setTimeout(confetti, 220);
++  showCheckinReport(rec, gained);
++}
++
++function showCheckinReport(rec, gained) {
++  const prev = lastCheckinBefore(rec.month);
++  const modal = document.getElementById("checkinModal") || (() => {
++    const d = document.createElement("div"); d.className = "tmodal"; d.id = "checkinModal";
++    document.body.appendChild(d); return d;
++  })();
++
++  const delta = (cur, was, unit, invertGood) => {
++    if (was == null || cur == null) return `<span class="dl-flat">—</span>`;
++    const d = +(cur - was).toFixed(1);
++    if (d === 0) return `<span class="dl-flat">±0${unit}</span>`;
++    const good = invertGood ? d < 0 : d > 0;
++    return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${d > 0 ? "▲ +" : "▼ "}${d}${unit}</span>`;
++  };
++  // Weight "good" direction depends on the goal.
++  const wGoodDown = state.profile.goal !== "gain";
++  const daysM = daysDoneInMonth(rec.month);
++  const strk = checkinStreak();
++
++  const measureRows = MEASURES.filter(([id]) => rec[id] != null || (prev && prev[id] != null)).map(([id, label]) => `
++    <div class="rep-mrow"><span>${label}</span><span>${rec[id] != null ? rec[id] + " cm" : "—"}</span>${delta(rec[id], prev && prev[id], " cm", true)}</div>`).join("");
++
++  const ratingBar = (id, emoji, label) => {
++    const v = rec[id]; if (!v) return "";
++    return `<div class="rep-rate"><span>${label}</span><span class="rr-dots">${"●".repeat(v)}${"○".repeat(5 - v)}</span><span>${emoji}</span></div>`;
++  };
++
++  modal.innerHTML = `
++    <div class="tcard report-card">
++      <button class="tclose" aria-label="Close">✕</button>
++      <div class="rep-hero">
++        <div class="rep-spark">✨</div>
++        <h2>Month ${rec.month} in the books</h2>
++        <p class="muted small">${strk > 1 ? `${strk}-month check-in streak 🔥 — that's how transformations happen.` : `Baseline locked in. Come back next month to watch it move.`}</p>
++      </div>
++
++      <div class="rep-stats">
++        <div class="rep-stat"><div class="rs-val">+${XP_CHECKIN}</div><div class="rs-lbl">XP earned</div></div>
++        <div class="rep-stat"><div class="rs-val">${daysM}</div><div class="rs-lbl">days trained</div></div>
++        <div class="rep-stat"><div class="rs-val">${rec.weight}<span class="rs-unit">kg</span></div><div class="rs-lbl">${prev ? delta(rec.weight, prev.weight, "", wGoodDown) : "baseline"}</div></div>
++        <div class="rep-stat"><div class="rs-val">${strk}</div><div class="rs-lbl">month streak</div></div>
++      </div>
++
++      ${measureRows ? `<div class="ci-section-label">📐 Measurements</div><div class="rep-measures">${measureRows}</div>` : ""}
++      ${RATINGS.some(([id]) => rec[id]) ? `<div class="ci-section-label">💚 Feel</div><div class="rep-rates">${RATINGS.map(([id, e, l]) => ratingBar(id, e, l)).join("")}</div>` : ""}
++
++      ${rec.photo || (prev && prev.photo) ? `
++        <div class="ci-section-label">📷 ${prev && prev.photo && rec.photo ? "Then → now" : "Progress photo"}</div>
++        <div class="rep-photos">
++          ${prev && prev.photo ? `<figure><img src="${prev.photo}" alt="Previous"/><figcaption>Month ${prev.month}</figcaption></figure>` : ""}
++          ${rec.photo ? `<figure><img src="${rec.photo}" alt="Now"/><figcaption>Month ${rec.month}</figcaption></figure>` : ""}
++        </div>` : ""}
++
++      ${rec.win ? `<div class="rep-quote">🏆 “${esc(rec.win)}”</div>` : ""}
++      ${rec.focus ? `<div class="rep-focus">🎯 Next month: <strong>${esc(rec.focus)}</strong></div>` : ""}
++
++      ${gained.length ? `<div class="rep-unlock">🎉 New badge${gained.length > 1 ? "s" : ""} unlocked: ${gained.map((b) => `${b.icon} ${b.name}`).join(" · ")}</div>` : ""}
++
++      <button class="btn gold big" id="repDone">Keep it going →</button>
++    </div>`;
++  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCheckin(); });
++  modal.querySelector("#repDone").addEventListener("click", () => { closeCheckin(); render(); });
++}
++
++function closeCheckin() { document.getElementById("checkinModal")?.remove(); ciForm = null; }
++
++// Inviting banner that pulls people into the check-in when one is due.
++function checkinBanner() {
++  if (!checkinDue()) return "";
++  const m = currentMonthNo();
++  return `
++    <button class="checkin-nudge" data-open-checkin="${m}">
++      <span class="cn-emoji">📸</span>
++      <span class="cn-body">
++        <strong>Month ${m} check-in is ready</strong>
++        <span class="small">Snapshot your progress · +${XP_CHECKIN} XP · unlock a badge</span>
++      </span>
++      <span class="cn-cta">Start →</span>
++    </button>`;
++}
++
++/* ================= Reminders ================= */
++// A pure client-side PWA can't reliably fire background alerts, so the always-on
++// mechanism is the in-app nudge banner. Notifications are a bonus that fire while
++// the app is open (or recently backgrounded) at the chosen time.
++
++let reminderTimers = [];
++
++function notifSupported() { return typeof Notification !== "undefined" && "serviceWorker" in navigator; }
++function notifGranted() { return notifSupported() && Notification.permission === "granted"; }
++
++async function showNotif(title, body) {
++  if (!notifGranted()) return;
++  const opts = { body, icon: "icon-192.png", badge: "icon-192.png", tag: "fityear", renotify: true };
++  try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, opts); }
++  catch { try { new Notification(title, opts); } catch { /* ignore */ } }
++}
++
++function msUntilToday(hhmm) {
++  const [h, mi] = (hhmm || "").split(":").map(Number);
++  if (isNaN(h)) return null;
++  const t = new Date(); t.setHours(h, mi || 0, 0, 0);
++  const diff = t - Date.now();
++  return diff > 1000 ? diff : null; // only future times today; tomorrow is caught on next open
++}
++
++function todayWorkoutDone() {
++  if (!state.profile) return true;
++  const t = todayInfo();
++  return !!state.progress.completed[`w${t.week}d${t.dayIdx}`];
++}
++
++function scheduleReminders() {
++  reminderTimers.forEach(clearTimeout);
++  reminderTimers = [];
++  if (!state.profile || !notifGranted()) return;
++  const r = state.reminders;
++  if (r.workout.on) {
++    const ms = msUntilToday(r.workout.time);
++    if (ms != null) reminderTimers.push(setTimeout(() => {
++      if (!todayWorkoutDone()) showNotif("Time to train 💪", `Day ${todayInfo().dayNum} is waiting — keep your 🔥 streak alive!`);
++      if (r.checkin.on && checkinDue()) showNotif("Monthly check-in ready 📸", `Snapshot your Month ${currentMonthNo()} progress and earn +${XP_CHECKIN} XP.`);
++    }, ms));
++  }
++}
++
++async function requestNotif() {
++  if (!notifSupported()) { alert("This browser doesn't support notifications."); return; }
++  try {
++    const p = await Notification.requestPermission();
++    if (p === "granted") { showNotif("Notifications on 🔔", "We'll nudge you at your reminder time while FitYear is open."); scheduleReminders(); }
++    if (state.ui.tab === "progress") renderProgress();
++  } catch { /* ignore */ }
++}
++
+ /* ================= Today helpers ================= */
+ 
+ function todayInfo() {
+@@ -514,9 +851,11 @@ document.addEventListener("click", (e) => {
+   const b = e.target.closest(".exname");
+   if (b) openTutorial(b.dataset.ex);
+   if (e.target.closest(".helpbtn")) openHelp();
++  const ci = e.target.closest("[data-open-checkin]");
++  if (ci) openMonthlyCheckin(+ci.dataset.openCheckin);
+ });
+ document.addEventListener("keydown", (e) => {
+-  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); }
++  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); closeCheckin(); }
+ });
+ 
+ /* ================= Shared blocks ================= */
+@@ -675,6 +1014,8 @@ function renderToday() {
+       </div>
+     </div>
+ 
++    ${checkinBanner()}
++
+     <div class="card day-focus">
+       <div class="df-head">
+         <h2>${day.isTraining ? `🏋️ ${day.workout.label}` : "🌿 Rest & Recovery"}</h2>
+@@ -991,6 +1332,103 @@ function wireGrocery(week, targets) {
+ 
+ /* ================= Progress tab ================= */
+ 
++function checkpointsCard() {
++  const cs = allCheckins();
++  const m = currentMonthNo();
++  const strk = checkinStreak();
++  const due = checkinDue();
++  const cta = due
++    ? `<button class="btn gold" data-open-checkin="${m}">📸 Check in for Month ${m} · +${XP_CHECKIN} XP</button>`
++    : `<button class="btn secondary" data-open-checkin="${m}">✓ Month ${m} done — view / edit</button>`;
++
++  if (!cs.length) {
++    return `
++      <div class="card ck-empty">
++        <div class="ck-empty-emoji">📸</div>
++        <div><strong>Take your Month 1 snapshot</strong>
++          <div class="muted small">Weight, tape measures, a photo and how you feel — your baseline to measure everything against. Takes a minute, earns +${XP_CHECKIN} XP.</div></div>
++        ${cta}
++      </div>`;
++  }
++
++  const rows = cs.slice().reverse().map((c) => {
++    const prev = lastCheckinBefore(c.month);
++    const wDelta = prev ? (() => {
++      const d = +(c.weight - prev.weight).toFixed(1);
++      if (d === 0) return `<span class="dl-flat">±0</span>`;
++      const good = state.profile.goal === "gain" ? d > 0 : d < 0;
++      return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${d > 0 ? "+" : ""}${d} kg</span>`;
++    })() : `<span class="dl-flat">baseline</span>`;
++    return `
++      <button class="ck-row" data-open-checkin="${c.month}">
++        ${c.photo ? `<img class="ck-thumb" src="${c.photo}" alt="" />` : `<span class="ck-thumb ck-noimg">📅</span>`}
++        <span class="ck-main">
++          <strong>Month ${c.month}</strong> <span class="muted small">· ${c.date}</span>
++          ${c.win ? `<span class="ck-win small">🏆 ${esc(c.win)}</span>` : ""}
++        </span>
++        <span class="ck-right"><span class="ck-w">${c.weight} kg</span>${wDelta}</span>
++      </button>`;
++  }).join("");
++
++  return `
++    <div class="card">
++      <div class="ck-head">
++        <div class="ck-streak"><span class="ck-streak-num">${strk}</span><span class="muted small">month${strk === 1 ? "" : "s"} in a row</span></div>
++        ${cta}
++      </div>
++      <div class="ck-list">${rows}</div>
++    </div>`;
++}
++
++function remindersCard() {
++  const r = state.reminders;
++  const perm = notifSupported() ? Notification.permission : "unsupported";
++  const status = {
++    granted: `<span class="rem-ok">🔔 Notifications on</span>`,
++    denied: `<span class="rem-off">Notifications blocked in your browser settings</span>`,
++    default: `<button class="btn secondary tiny" id="enableNotifBtn">Enable notifications</button>`,
++    unsupported: `<span class="muted small">Notifications aren't supported on this browser</span>`,
++  }[perm];
++
++  const toggle = (id, on, label, sub) => `
++    <label class="rem-toggle">
++      <input type="checkbox" id="${id}" ${on ? "checked" : ""} />
++      <span class="rem-switch"></span>
++      <span class="rem-text"><strong>${label}</strong><span class="muted small">${sub}</span></span>
++    </label>`;
++
++  return `
++    <div class="card">
++      ${toggle("remCheckin", r.checkin.on, "Monthly check-in nudge", "Shows a check-in card on Today when a new month is due")}
++      ${toggle("remWorkout", r.workout.on, "Daily workout reminder", "A heads-up if today's session isn't done yet")}
++      <div class="rem-timerow ${r.workout.on ? "" : "hidden"}" id="remTimeRow">
++        <span class="muted small">Remind me at</span>
++        <input type="time" id="remWorkoutTime" value="${r.workout.time}" />
++      </div>
++      <div class="rem-status">${status}</div>
++      <div class="muted small mt4">Reminders always appear inside the app. Phone alerts fire while FitYear is open — installed web apps can't reliably alert in the background, so the in-app nudges are your dependable reminder.</div>
++    </div>`;
++}
++
++function wireReminders() {
++  const rerender = () => { save(STORE.reminders, state.reminders); renderProgress(); };
++  document.getElementById("remCheckin")?.addEventListener("change", (e) => {
++    state.reminders.checkin.on = e.target.checked; rerender();
++  });
++  document.getElementById("remWorkout")?.addEventListener("change", (e) => {
++    state.reminders.workout.on = e.target.checked;
++    save(STORE.reminders, state.reminders);
++    scheduleReminders();
++    renderProgress();
++  });
++  document.getElementById("remWorkoutTime")?.addEventListener("change", (e) => {
++    state.reminders.workout.time = e.target.value;
++    save(STORE.reminders, state.reminders);
++    scheduleReminders();
++  });
++  document.getElementById("enableNotifBtn")?.addEventListener("click", requestNotif);
++}
++
+ function renderProgress() {
+   const p = state.profile;
+   const targets = getTargets();
+@@ -1006,6 +1444,8 @@ function renderProgress() {
+   $view().innerHTML = `
+     <div class="pagehead"><h1>📈 Progress</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+ 
++    ${checkinBanner()}
++
+     <div class="levelcard card">
+       <div class="lc-row">
+         <div class="lc-level">Lv ${x.level + 1}</div>
+@@ -1035,6 +1475,9 @@ function renderProgress() {
+         </div>`).join("")}
+     </div>
+ 
++    <h2 class="section-title">🗓️ Monthly checkpoints</h2>
++    ${checkpointsCard()}
++
+     <h2 class="section-title">⚖️ Weekly check-in</h2>
+     <div class="card">
+       <div class="muted small">Log your weight once a week (same day, morning, empty stomach). Your calorie target auto-adjusts based on your trend.</div>
+@@ -1054,6 +1497,9 @@ function renderProgress() {
+         : `<div class="muted">Log top sets on at least two workouts for an exercise (from Today or Plan) and its progression chart appears here.</div>`}
+     </div>
+ 
++    <h2 class="section-title">🔔 Reminders</h2>
++    ${remindersCard()}
++
+     <h2 class="section-title">⚙️ Data & profile</h2>
+     <div class="card">
+       <div class="topbar-actions">
+@@ -1069,6 +1515,8 @@ function renderProgress() {
+   document.querySelectorAll(".chip[data-ex]").forEach((c) =>
+     c.addEventListener("click", () => { state.ui.chartEx = c.dataset.ex; renderProgress(); }));
+ 
++  wireReminders();
++
+   document.getElementById("saveWeight").addEventListener("click", () => {
+     const v = parseFloat(document.getElementById("weightInput").value);
+     if (!v) return;
+@@ -1090,7 +1538,7 @@ function renderProgress() {
+   document.getElementById("exportBtn").addEventListener("click", () => {
+     const data = {
+       app: "FitYear", version: 2, exportedAt: new Date().toISOString(),
+-      profile: state.profile, progress: state.progress,
++      profile: state.profile, progress: state.progress, reminders: state.reminders,
+     };
+     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+     const a = document.createElement("a");
+@@ -1114,6 +1562,7 @@ function renderProgress() {
+         if (!confirm(`Restore backup for "${data.profile.name}" (saved ${when})? This replaces your current data.`)) return;
+         state.profile = data.profile;
+         state.progress = data.progress;
++        if (data.reminders) { state.reminders = Object.assign({}, DEFAULT_REMINDERS, data.reminders); save(STORE.reminders, state.reminders); }
+         save(STORE.profile, state.profile);
+         save(STORE.progress, state.progress);
+         render();
+@@ -1342,7 +1791,9 @@ const HELP_SECTIONS = [
+   ["🛒", "Grocery", "A checkable shopping list covering every meal of the selected week — printable too."],
+   ["💊", "Supplements", "Your personalized stack with doses and best timing lives in Plan → Supplements; tick them off daily on Today."],
+   ["⚖️", "Weekly check-in", "Log your weight once a week in Progress. The coach compares your trend to the healthy rate and auto-adjusts your calories."],
+-  ["🏅", "XP, streaks & badges", "Completed days, logged sets and check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 8 badges."],
++  ["📸", "Monthly check-in", "Once a month, snapshot your weight, tape measures, a photo and how you feel. You get a progress report comparing it to last time, +50 XP and badges. Find it on Today's nudge or Progress → Monthly checkpoints."],
++  ["🔔", "Reminders", "In Progress → Reminders, switch on the monthly check-in nudge and a daily workout reminder (pick a time). In-app nudges always work; enable notifications for phone alerts while the app is open."],
++  ["🏅", "XP, streaks & badges", "Completed days, logged sets, weigh-ins and monthly check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 11 badges."],
+   ["💾", "Backup & privacy", "Everything stays on your device. Use Backup/Restore in Progress to move your data to a new phone."],
+ ];
+ 
+@@ -1379,3 +1830,8 @@ function esc(s) {
+ render();
+ // Show the guided tour once — for brand-new plans and for existing users after this update.
+ if (state.profile && !state.ui.editingProfile && !state.progress.tourDone) setTimeout(startTour, 400);
++
++// Arm local reminders for this session, and re-arm when the app comes back to
++// the foreground (a new day may have started, or a scheduled time passed).
++scheduleReminders();
++document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleReminders(); });
+diff --git a/styles.css b/styles.css
+index 58f0fd0..e6e2c06 100644
+--- a/styles.css
++++ b/styles.css
+@@ -507,6 +507,137 @@ input.exedit { width: 58px; padding: 4px 6px; font-size: max(16px, 0.75rem); }
+ .helprow:last-of-type { border-bottom: none; }
+ .helprow .hicon { font-size: 1.25rem; flex: none; }
+ 
++/* ==================== Monthly check-in & reminders ==================== */
++
++/* ---- Due nudge banner ---- */
++.checkin-nudge {
++  width: 100%; display: flex; align-items: center; gap: 13px; text-align: left;
++  margin: 0 0 16px; padding: 14px 16px; cursor: pointer;
++  border: 1px solid rgba(245, 185, 66, 0.5); border-radius: 18px;
++  background: linear-gradient(135deg, rgba(245, 185, 66, 0.16), rgba(124, 140, 255, 0.12));
++  box-shadow: 0 0 22px rgba(245, 185, 66, 0.14);
++  animation: nudge-in 0.4s ease-out, nudge-glow 3.2s ease-in-out 0.4s infinite;
++}
++@keyframes nudge-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
++@keyframes nudge-glow { 0%, 100% { box-shadow: 0 0 22px rgba(245, 185, 66, 0.12); } 50% { box-shadow: 0 0 30px rgba(245, 185, 66, 0.28); } }
++.checkin-nudge .cn-emoji { font-size: 1.7rem; flex: none; filter: drop-shadow(0 0 8px rgba(245, 185, 66, 0.5)); }
++.checkin-nudge .cn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; color: var(--text); }
++.checkin-nudge .cn-body strong { font-size: 0.95rem; }
++.checkin-nudge .cn-body .small { color: var(--muted); font-size: 0.78rem; }
++.checkin-nudge .cn-cta { flex: none; font-weight: 800; color: var(--gold); font-size: 0.9rem; }
++
++/* ---- Check-in modal ---- */
++.checkin-card .ci-hero, .report-card .rep-hero { text-align: center; margin-bottom: 16px; }
++.ci-badge {
++  font-size: 2.2rem; width: 66px; height: 66px; margin: 0 auto 8px;
++  display: flex; align-items: center; justify-content: center; border-radius: 50%;
++  background: radial-gradient(circle at 50% 35%, rgba(245, 185, 66, 0.32), rgba(124, 140, 255, 0.12));
++  box-shadow: 0 0 26px rgba(245, 185, 66, 0.3); animation: pulse-badge 2.4s ease-in-out infinite;
++}
++@keyframes pulse-badge { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
++.checkin-card h2, .report-card h2 { padding-right: 0; margin-bottom: 4px; }
++.ci-section-label { font-weight: 800; font-size: 0.9rem; margin: 20px 0 9px; display: flex; align-items: center; gap: 6px; }
++.ci-section-label em { font-style: normal; font-weight: 500; color: var(--muted); font-size: 0.78rem; }
++.big-field input { font-size: 1.15rem; font-weight: 700; padding: 12px; }
++.measure-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
++.measure-grid input { text-align: center; }
++
++/* emoji rating rows */
++.raterow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; }
++.raterow .ratelabel { font-weight: 700; font-size: 0.9rem; }
++.ratedots { display: flex; gap: 6px; }
++.ratedot {
++  font-size: 1.35rem; line-height: 1; background: transparent; border: none; cursor: pointer;
++  padding: 3px; opacity: 0.28; filter: grayscale(1); transform: scale(0.9);
++  transition: transform 0.14s ease, opacity 0.14s ease, filter 0.14s ease;
++}
++.ratedot.on { opacity: 1; filter: none; transform: scale(1.12); }
++.ratedot:active { transform: scale(0.8); }
++
++/* photo picker */
++.photo-drop {
++  display: flex; align-items: center; justify-content: center; cursor: pointer;
++  min-height: 130px; border: 1.5px dashed var(--line); border-radius: 16px; background: var(--bg);
++  overflow: hidden;
++}
++.photo-drop:hover { border-color: var(--accent); }
++.photo-drop img { width: 100%; max-height: 260px; object-fit: cover; }
++.photo-drop .pd-hint { color: var(--muted); font-weight: 700; }
++.btn.big { padding: 14px; font-size: 1rem; }
++
++/* ---- Progress report card ---- */
++.rep-spark { font-size: 2.4rem; animation: pulse-badge 2s ease-in-out infinite; }
++.rep-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin: 8px 0 6px; }
++@media (max-width: 460px) { .rep-stats { grid-template-columns: repeat(2, 1fr); } }
++.rep-stat {
++  background: linear-gradient(180deg, var(--card-hi), var(--card)); border: 1px solid var(--line);
++  border-radius: 14px; padding: 12px 8px; text-align: center;
++}
++.rep-stat .rs-val { font-size: 1.35rem; font-weight: 800; }
++.rep-stat .rs-val .rs-unit { font-size: 0.8rem; color: var(--muted); margin-left: 1px; }
++.rep-stat .rs-lbl { font-size: 0.7rem; color: var(--muted); margin-top: 3px; }
++.dl { font-weight: 800; font-size: 0.82rem; }
++.dl-good { color: var(--green, #3ecf8e); }
++.dl-warn { color: var(--gold); }
++.dl-flat { color: var(--muted); font-weight: 700; font-size: 0.82rem; }
++.rep-measures { display: flex; flex-direction: column; gap: 2px; }
++.rep-mrow { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 0.88rem; }
++.rep-mrow:last-child { border-bottom: none; }
++.rep-mrow span:nth-child(2) { color: var(--muted); font-variant-numeric: tabular-nums; }
++.rep-rates { display: flex; flex-direction: column; gap: 6px; }
++.rep-rate { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; font-size: 0.88rem; }
++.rep-rate .rr-dots { letter-spacing: 2px; color: var(--gold); }
++.rep-photos { display: flex; gap: 10px; }
++.rep-photos figure { flex: 1; min-width: 0; margin: 0; text-align: center; }
++.rep-photos img { width: 100%; border-radius: 12px; border: 1px solid var(--line); object-fit: cover; max-height: 240px; }
++.rep-photos figcaption { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
++.rep-quote { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--gold-soft); border: 1px solid rgba(245, 185, 66, 0.4); font-weight: 700; font-style: italic; }
++.rep-focus { margin-top: 8px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); border: 1px solid rgba(124, 140, 255, 0.3); font-size: 0.9rem; }
++.rep-unlock { margin-top: 12px; text-align: center; font-weight: 800; color: var(--gold); }
++
++/* ---- Checkpoints card (Progress tab) ---- */
++.ck-empty { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; }
++.ck-empty-emoji { font-size: 2rem; flex: none; }
++.ck-empty > div { flex: 1; min-width: 180px; }
++.ck-empty .btn { margin-top: 0; }
++.ck-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
++.ck-head .btn { margin-top: 0; }
++.ck-streak { display: flex; align-items: baseline; gap: 7px; }
++.ck-streak-num {
++  font-size: 1.9rem; font-weight: 800; color: var(--gold);
++  filter: drop-shadow(0 0 8px rgba(245, 185, 66, 0.4));
++}
++.ck-list { display: flex; flex-direction: column; gap: 8px; }
++.ck-row {
++  display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer; width: 100%;
++  background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 9px 12px; color: var(--text);
++  transition: border-color 0.14s ease;
++}
++.ck-row:hover { border-color: var(--accent); }
++.ck-thumb { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; flex: none; border: 1px solid var(--line); }
++.ck-noimg { display: flex; align-items: center; justify-content: center; font-size: 1.3rem; background: var(--card-hi); }
++.ck-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
++.ck-win { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ck-right { flex: none; text-align: right; display: flex; flex-direction: column; gap: 2px; }
++.ck-right .ck-w { font-weight: 800; font-size: 0.92rem; }
++
++/* ---- Reminders card ---- */
++.rem-toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 10px 0; border-bottom: 1px solid var(--line); }
++.rem-toggle:first-child { padding-top: 0; }
++.rem-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
++.rem-switch { position: relative; flex: none; width: 44px; height: 26px; border-radius: 99px; background: var(--line); transition: background 0.18s ease; }
++.rem-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform 0.18s ease; }
++.rem-toggle input:checked + .rem-switch { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); }
++.rem-toggle input:checked + .rem-switch::after { transform: translateX(18px); }
++.rem-toggle input:focus-visible + .rem-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
++.rem-text { display: flex; flex-direction: column; gap: 1px; }
++.rem-timerow { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; }
++.rem-timerow.hidden { display: none; }
++.rem-timerow input[type="time"] { width: auto; }
++.rem-status { margin-top: 12px; }
++.rem-status .rem-ok { color: var(--green, #3ecf8e); font-weight: 700; font-size: 0.875rem; }
++.rem-status .rem-off { color: var(--muted); font-size: 0.8125rem; }
++
+ /* ---- Print: weekly & grocery sheets ---- */
+ #printview { display: none; }
+ @media print {
+diff --git a/sw.js b/sw.js
+index 965fff3..77ca866 100644
+--- a/sw.js
++++ b/sw.js
+@@ -1,6 +1,6 @@
+ ﻿// FitYear service worker — network-first for the app shell so deploys show up
+ // immediately, cache fallback so the app still works fully offline.
+-const CACHE = "fityear-v18";
++const CACHE = "fityear-v19";
+ const ASSETS = [
+   "./", "index.html", "styles.css", "data.js", "tutorials.js", "planner.js", "app.js",
+   "manifest.json", "icon.svg", "icon-192.png", "icon-512.png", "fonts/manrope.woff2",
+@@ -19,6 +19,17 @@ self.addEventListener("activate", (e) => {
+   );
+ });
+ 
++// Tapping a reminder notification focuses an open FitYear tab, or opens one.
++self.addEventListener("notificationclick", (e) => {
++  e.notification.close();
++  e.waitUntil(
++    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
++      for (const c of list) { if ("focus" in c) return c.focus(); }
++      if (self.clients.openWindow) return self.clients.openWindow("./");
++    })
++  );
++});
++
+ self.addEventListener("fetch", (e) => {
+   if (e.request.method !== "GET") return;
+   const path = new URL(e.request.url).pathname;
+-- 
+2.43.0
+
