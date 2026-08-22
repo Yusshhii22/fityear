@@ -1122,6 +1122,8 @@ function renderToday() {
       <button class="btn ${done ? "ghost" : "gold"}" id="doneBtn">${done ? "Undo — not done yet" : `Mark Day ${t.dayNum} complete (+25 XP)`}</button>
     </div>
 
+    ${coachCard(2)}
+
     <div class="card">${mealsBlock(day.meals, targets.calories)}</div>
     ${suppCard(t.week, day.dayIdx, day.isTraining)}
     <footer class="note muted small">${HYDRATION_TIP}</footer>`;
@@ -1584,6 +1586,11 @@ function renderProgress() {
       <div class="stat"><div class="val">${pctLabel}%</div><div class="lbl">${x.done}/${totalDays} days done<div class="progressbar"><div style="width:${pct}%"></div></div></div></div>
     </div>
 
+    <h2 class="section-title">🧠 Smart coach</h2>
+    ${coachInsights().length
+      ? `<div class="card coach-card">${coachInsights().map(insightCard).join("")}</div>`
+      : `<div class="card muted small">Log a few workouts, weigh-ins and a monthly check-in — your coach will start spotting patterns and prescribing your next move here.</div>`}
+
     <h2 class="section-title">🏅 Badges</h2>
     <div class="badges">
       ${badges.map((b) => `
@@ -1738,6 +1745,106 @@ function coachNotes() {
   return `
     <h3 class="mt">🧠 Coach notes</h3>
     ${log.map((n) => `<div class="coach-note ${n.adjusted ? "adjusted" : ""}"><strong>Week ${n.week}:</strong> ${n.text}</div>`).join("")}`;
+}
+
+/* ================= Smart coach: on-device agents =================
+   Each agent reads your saved data and returns at most one insight
+   { icon, tone: win|tip|warn, title, text }. They run entirely in the
+   browser — no network, no account — and feed both the Today coach card
+   and the Progress "Smart coach" section. Later, the conversational Coach
+   uses the same insights as grounding context. */
+
+function coachInsights() {
+  const out = [];
+  for (const agent of [progressionAgent, plateauAgent, recoveryAgent, adherenceAgent]) {
+    try { const ins = agent(); if (ins) out.push(ins); } catch { /* an agent never breaks the app */ }
+  }
+  return out;
+}
+
+// Progression: which logged lifts have topped their rep range twice → add load.
+function progressionAgent() {
+  const lifts = state.progress.lifts || {};
+  const ph = phaseForWeek(todayInfo().week);
+  const topReps = parseInt(String(ph.reps).split(/[–-]/).pop(), 10) || 12;
+  const ready = [];
+  for (const [name, logs] of Object.entries(lifts)) {
+    if (!logs || logs.length < 2) continue;
+    const last = logs[logs.length - 1], prev = logs[logs.length - 2];
+    if (last.reps >= topReps && prev.reps >= topReps) {
+      ready.push(last.kg > 0
+        ? `${esc(name)} → try ${(last.kg + 2.5).toFixed(1).replace(/\.0$/, "")} kg`
+        : `${esc(name)} → add reps or a harder variation`);
+    }
+  }
+  if (!ready.length) return null;
+  return { icon: "📈", tone: "win", title: "Ready to level up",
+    text: `You've maxed the rep range on ${ready.length} lift${ready.length > 1 ? "s" : ""}: ${ready.slice(0, 3).join(" · ")}.` };
+}
+
+// Plateau: weight flat across the last 3 weigh-ins relative to the goal.
+function plateauAgent() {
+  const g = state.profile.goal;
+  if (g === "maintain") return null;
+  const e = Object.entries(state.progress.weights || {}).map(([w, kg]) => [+w, +kg]).sort((a, b) => a[0] - b[0]);
+  if (e.length < 3) return null;
+  const r = e.slice(-3);
+  const net = +(r[r.length - 1][1] - r[0][1]).toFixed(1);
+  const weeks = r[r.length - 1][0] - r[0][0] || 1;
+  const rate = net / weeks;
+  const stalled = g === "lose" ? rate > -0.1 : rate < 0.05;
+  if (!stalled) return null;
+  return { icon: "⏸️", tone: "warn", title: "Progress has flattened",
+    text: `Weight's held about steady over your last 3 check-ins (${net > 0 ? "+" : ""}${net} kg). ${g === "lose" ? "Tighten portions or add a walk / cardio session" : "Add a snack or bump portions"} — your calorie coach is already nudging the target.` };
+}
+
+// Recovery: latest monthly check-in flagged low energy or sleep.
+function recoveryAgent() {
+  const c = allCheckins();
+  const last = c[c.length - 1];
+  if (!last) return null;
+  const lowE = last.energy && last.energy <= 2, lowS = last.sleep && last.sleep <= 2;
+  if (!lowE && !lowS) return null;
+  const what = lowE && lowS ? "energy and sleep" : lowE ? "energy" : "sleep";
+  return { icon: "😴", tone: "tip", title: "Recovery first",
+    text: `Your last check-in flagged low ${what}. Protect your sleep, hydrate, and keep a session or two easy this week — recovery is where the gains land.` };
+}
+
+// Adherence: sessions completed in the last 14 days vs the plan.
+function adherenceAgent() {
+  const t = todayInfo();
+  if (t.dayNum < 7) return null;
+  const span = Math.min(14, t.dayNum);
+  let done = 0;
+  for (let i = 0; i < span; i++) {
+    const dn = t.dayNum - 1 - i;
+    if (dn < 0) break;
+    const w = Math.floor(dn / 7) + 1, d = dn % 7;
+    if (state.progress.completed[`w${w}d${d}`]) done++;
+  }
+  const target = Math.round((state.profile.days / 7) * span);
+  if (target > 0 && done >= target) {
+    return { icon: "🔥", tone: "win", title: "Locked in",
+      text: `${done} sessions in the last 2 weeks — right on plan. Keep the streak alive.` };
+  }
+  if (done < Math.max(1, target - 2)) {
+    return { icon: "👋", tone: "tip", title: "Let's get back on track",
+      text: `Only ${done} session${done === 1 ? "" : "s"} logged in the last 2 weeks. Just do today's — momentum beats perfection.` };
+  }
+  return null;
+}
+
+function insightCard(ins) {
+  return `<div class="insight tone-${ins.tone}"><span class="ins-icon">${ins.icon}</span>
+    <div><strong>${ins.title}</strong><div class="small muted">${ins.text}</div></div></div>`;
+}
+
+// Compact card for Today (top few insights); full list lives on Progress.
+function coachCard(limit) {
+  const ins = coachInsights();
+  if (!ins.length) return "";
+  const list = limit ? ins.slice(0, limit) : ins;
+  return `<div class="card coach-card"><h3>🧠 Your coach</h3>${list.map(insightCard).join("")}</div>`;
 }
 
 /* ---- Charts (inline SVG) ---- */
@@ -1910,6 +2017,7 @@ const HELP_SECTIONS = [
   ["🛒", "Grocery", "A checkable shopping list covering every meal of the selected week — printable too."],
   ["💊", "Supplements", "Your personalized stack with doses and best timing lives in Plan → Supplements; tick them off daily on Today."],
   ["⚖️", "Weekly check-in", "Log your weight once a week in Progress. The coach compares your trend to the healthy rate and auto-adjusts your calories."],
+  ["🧠", "Smart coach", "On-device agents read your logged sets, weight trend, check-ins and adherence to prescribe your next move — when to add weight, when a plateau needs a change, when to prioritise recovery. Insights appear on Today and in Progress → Smart coach."],
   ["📸", "Monthly check-in", "Once a month, snapshot your weight, tape measures, a photo and how you feel. You get a progress report comparing it to last time, +50 XP and badges. Find it on Today's nudge or Progress → Monthly checkpoints."],
   ["🔔", "Reminders", "In Progress → Reminders, switch on the monthly check-in nudge and a daily workout reminder (pick a time). In-app nudges always work; enable notifications for phone alerts while the app is open."],
   ["🏅", "XP, streaks & badges", "Completed days, logged sets, weigh-ins and monthly check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 11 badges."],

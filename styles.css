@@ -296,6 +296,20 @@ svg.chart { width: 100%; height: 130px; }
 }
 .coach-note.adjusted { border-color: var(--amber); background: var(--amber-soft); }
 
+/* ---- Smart coach insights ---- */
+.coach-card h3 { margin-bottom: 10px; }
+.insight {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 11px 12px; border-radius: 14px; margin-top: 8px;
+  background: var(--bg); border: 1px solid var(--line); border-left-width: 3px;
+}
+.insight:first-of-type { margin-top: 0; }
+.insight .ins-icon { font-size: 1.3rem; flex: none; line-height: 1.4; }
+.insight strong { font-size: 0.9rem; }
+.insight.tone-win { border-left-color: var(--green, #3ddc84); }
+.insight.tone-tip { border-left-color: var(--accent); }
+.insight.tone-warn { border-left-color: var(--gold); }
+
 /* ---- Milestones ---- */
 .milestone { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 0.875rem; }
 .milestone:last-child { border-bottom: none; }
