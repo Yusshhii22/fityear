@@ -8,13 +8,23 @@ const STORE = {
 
 const DEFAULT_REMINDERS = {
   workout: { on: false, time: "18:00" },
-  checkin: { on: true },
+  checkin: { on: true, time: "09:00" },
 };
+
+// Merge stored prefs over defaults one level deep, so new sub-fields (like a
+// newly-added checkin time) fill in for people who saved prefs earlier.
+function normalizeReminders(saved) {
+  const s = saved || {};
+  return {
+    workout: Object.assign({}, DEFAULT_REMINDERS.workout, s.workout),
+    checkin: Object.assign({}, DEFAULT_REMINDERS.checkin, s.checkin),
+  };
+}
 
 const state = {
   profile: load(STORE.profile),
   progress: load(STORE.progress) || { completed: {}, weights: {}, currentWeek: 1 },
-  reminders: Object.assign({}, DEFAULT_REMINDERS, load(STORE.reminders) || {}),
+  reminders: normalizeReminders(load(STORE.reminders)),
   ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
 };
 
@@ -149,6 +159,29 @@ function daysDoneInMonth(m) {
     if (mt && +mt[1] >= lo && +mt[1] <= hi) n++;
   }
   return n;
+}
+
+// Which direction of change counts as progress, given the user's goal.
+// true = smaller is better, false = bigger is better, null = neutral (no colour).
+function weightGoodDown() {
+  const g = state.profile.goal;
+  return g === "gain" ? false : g === "lose" ? true : null;
+}
+function measureGoodDown(id) {
+  const g = state.profile.goal;
+  if (g === "maintain") return null;          // holding steady — don't judge either way
+  if (id === "waist") return true;            // waist is the fat proxy: smaller wins
+  return g === "gain" ? false : true;         // muscle sites: bigger on a bulk, smaller on a cut
+}
+// Shared delta chip: sign arrow + goal-aware good/warn colour (or neutral).
+function deltaChip(cur, was, unit, goodDown) {
+  if (was == null || cur == null) return `<span class="dl-flat">—</span>`;
+  const d = +(cur - was).toFixed(1);
+  const body = `${d > 0 ? "▲ +" : d < 0 ? "▼ " : ""}${d}${unit}`;
+  if (d === 0) return `<span class="dl-flat">±0${unit}</span>`;
+  if (goodDown == null) return `<span class="dl-flat">${body}</span>`;
+  const good = goodDown ? d < 0 : d > 0;
+  return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${body}</span>`;
 }
 
 // Downscale a chosen photo to a small JPEG data URL so a year of check-ins
@@ -303,20 +336,11 @@ function showCheckinReport(rec, gained) {
     document.body.appendChild(d); return d;
   })();
 
-  const delta = (cur, was, unit, invertGood) => {
-    if (was == null || cur == null) return `<span class="dl-flat">—</span>`;
-    const d = +(cur - was).toFixed(1);
-    if (d === 0) return `<span class="dl-flat">±0${unit}</span>`;
-    const good = invertGood ? d < 0 : d > 0;
-    return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${d > 0 ? "▲ +" : "▼ "}${d}${unit}</span>`;
-  };
-  // Weight "good" direction depends on the goal.
-  const wGoodDown = state.profile.goal !== "gain";
   const daysM = daysDoneInMonth(rec.month);
   const strk = checkinStreak();
 
   const measureRows = MEASURES.filter(([id]) => rec[id] != null || (prev && prev[id] != null)).map(([id, label]) => `
-    <div class="rep-mrow"><span>${label}</span><span>${rec[id] != null ? rec[id] + " cm" : "—"}</span>${delta(rec[id], prev && prev[id], " cm", true)}</div>`).join("");
+    <div class="rep-mrow"><span>${label}</span><span>${rec[id] != null ? rec[id] + " cm" : "—"}</span>${deltaChip(rec[id], prev && prev[id], " cm", measureGoodDown(id))}</div>`).join("");
 
   const ratingBar = (id, emoji, label) => {
     const v = rec[id]; if (!v) return "";
@@ -335,7 +359,7 @@ function showCheckinReport(rec, gained) {
       <div class="rep-stats">
         <div class="rep-stat"><div class="rs-val">+${XP_CHECKIN}</div><div class="rs-lbl">XP earned</div></div>
         <div class="rep-stat"><div class="rs-val">${daysM}</div><div class="rs-lbl">days trained</div></div>
-        <div class="rep-stat"><div class="rs-val">${rec.weight}<span class="rs-unit">kg</span></div><div class="rs-lbl">${prev ? delta(rec.weight, prev.weight, "", wGoodDown) : "baseline"}</div></div>
+        <div class="rep-stat"><div class="rs-val">${rec.weight}<span class="rs-unit">kg</span></div><div class="rs-lbl">${prev ? deltaChip(rec.weight, prev.weight, "", weightGoodDown()) : "baseline"}</div></div>
         <div class="rep-stat"><div class="rs-val">${strk}</div><div class="rs-lbl">month streak</div></div>
       </div>
 
@@ -354,10 +378,78 @@ function showCheckinReport(rec, gained) {
 
       ${gained.length ? `<div class="rep-unlock">🎉 New badge${gained.length > 1 ? "s" : ""} unlocked: ${gained.map((b) => `${b.icon} ${b.name}`).join(" · ")}</div>` : ""}
 
-      <button class="btn gold big" id="repDone">Keep it going →</button>
+      <div class="rep-actions">
+        <button class="btn secondary" id="repShare">📤 Share my progress</button>
+        <button class="btn gold big" id="repDone">Keep it going →</button>
+      </div>
     </div>`;
   modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCheckin(); });
   modal.querySelector("#repDone").addEventListener("click", () => { closeCheckin(); render(); });
+  modal.querySelector("#repShare").addEventListener("click", (e) => shareCheckinCard(rec, e.currentTarget));
+}
+
+// Draw a clean shareable card on a canvas (no external libs, works offline) and
+// hand it to the native share sheet, falling back to a PNG download.
+async function shareCheckinCard(rec, btn) {
+  const prev = lastCheckinBefore(rec.month);
+  const W = 1080, H = 1080, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  // Background — brand gradient.
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#16203a"); bg.addColorStop(1, "#070b14");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgba(124,140,255,0.14)";
+  g.beginPath(); g.arc(W * 0.8, H * 0.12, 260, 0, 7); g.fill();
+
+  const center = (t, y, font, color) => { g.font = font; g.fillStyle = color; g.textAlign = "center"; g.fillText(t, W / 2, y); };
+  center("FitYear", 150, "800 54px Manrope, sans-serif", "#7c8cff");
+  center(`Month ${rec.month} check-in`, 230, "800 74px Manrope, sans-serif", "#f4f6fc");
+
+  // Big weight + delta.
+  center(`${rec.weight} kg`, 420, "800 150px Manrope, sans-serif", "#ffffff");
+  if (prev) {
+    const d = +(rec.weight - prev.weight).toFixed(1);
+    const gd = weightGoodDown();
+    const good = gd == null ? null : (gd ? d < 0 : d > 0);
+    center(`${d > 0 ? "▲ +" : d < 0 ? "▼ " : "±"}${d} kg since Month ${prev.month}`, 500,
+      "700 46px Manrope, sans-serif", good == null ? "#8b97b5" : good ? "#3ddc84" : "#f5b942");
+  } else {
+    center("baseline set", 500, "700 46px Manrope, sans-serif", "#8b97b5");
+  }
+
+  // Stat trio.
+  const strk = checkinStreak(), daysM = daysDoneInMonth(rec.month);
+  const stats = [[`${daysM}`, "days trained"], [`${strk}`, "month streak"], [`+${XP_CHECKIN}`, "XP earned"]];
+  stats.forEach(([v, l], i) => {
+    const x = W * (0.25 + i * 0.25);
+    g.textAlign = "center";
+    g.font = "800 84px Manrope, sans-serif"; g.fillStyle = "#f5b942"; g.fillText(v, x, 680);
+    g.font = "600 34px Manrope, sans-serif"; g.fillStyle = "#8b97b5"; g.fillText(l, x, 730);
+  });
+
+  if (rec.win) {
+    g.textAlign = "center"; g.font = "italic 700 46px Manrope, sans-serif"; g.fillStyle = "#f4f6fc";
+    const win = rec.win.length > 40 ? rec.win.slice(0, 39) + "…" : rec.win;
+    g.fillText(`🏆 “${win}”`, W / 2, 860);
+  }
+  center("Your 1-year fitness journey", 1000, "600 36px Manrope, sans-serif", "#8b97b5");
+
+  const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+  if (!blob) { alert("Couldn't build the image."); return; }
+  const file = new File([blob], `fityear-month-${rec.month}.png`, { type: "image/png" });
+  const shareText = `Month ${rec.month} of my FitYear journey 💪`;
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: shareText });
+      return;
+    }
+  } catch { if (btn) { /* user cancelled share — fall through to download */ } }
+  // Fallback: download the PNG.
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  URL.revokeObjectURL(a.href);
+  if (btn) { btn.textContent = "✓ Saved image"; setTimeout(() => { btn.textContent = "📤 Share my progress"; }, 2000); }
 }
 
 function closeCheckin() { document.getElementById("checkinModal")?.remove(); ciForm = null; }
@@ -417,7 +509,12 @@ function scheduleReminders() {
     const ms = msUntilToday(r.workout.time);
     if (ms != null) reminderTimers.push(setTimeout(() => {
       if (!todayWorkoutDone()) showNotif("Time to train 💪", `Day ${todayInfo().dayNum} is waiting — keep your 🔥 streak alive!`);
-      if (r.checkin.on && checkinDue()) showNotif("Monthly check-in ready 📸", `Snapshot your Month ${currentMonthNo()} progress and earn +${XP_CHECKIN} XP.`);
+    }, ms));
+  }
+  if (r.checkin.on) {
+    const ms = msUntilToday(r.checkin.time);
+    if (ms != null) reminderTimers.push(setTimeout(() => {
+      if (checkinDue()) showNotif("Monthly check-in ready 📸", `Snapshot your Month ${currentMonthNo()} progress and earn +${XP_CHECKIN} XP.`);
     }, ms));
   }
 }
@@ -1353,12 +1450,9 @@ function checkpointsCard() {
 
   const rows = cs.slice().reverse().map((c) => {
     const prev = lastCheckinBefore(c.month);
-    const wDelta = prev ? (() => {
-      const d = +(c.weight - prev.weight).toFixed(1);
-      if (d === 0) return `<span class="dl-flat">±0</span>`;
-      const good = state.profile.goal === "gain" ? d > 0 : d < 0;
-      return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${d > 0 ? "+" : ""}${d} kg</span>`;
-    })() : `<span class="dl-flat">baseline</span>`;
+    const wDelta = prev
+      ? deltaChip(c.weight, prev.weight, " kg", weightGoodDown())
+      : `<span class="dl-flat">baseline</span>`;
     return `
       <button class="ck-row" data-open-checkin="${c.month}">
         ${c.photo ? `<img class="ck-thumb" src="${c.photo}" alt="" />` : `<span class="ck-thumb ck-noimg">📅</span>`}
@@ -1376,7 +1470,21 @@ function checkpointsCard() {
         <div class="ck-streak"><span class="ck-streak-num">${strk}</span><span class="muted small">month${strk === 1 ? "" : "s"} in a row</span></div>
         ${cta}
       </div>
+      ${checkpointChart(cs)}
       <div class="ck-list">${rows}</div>
+    </div>`;
+}
+
+// Weight across all monthly checkpoints, reusing the shared inline-SVG line.
+function checkpointChart(cs) {
+  const pts = cs.filter((c) => c.weight != null).sort((a, b) => a.month - b.month)
+    .map((c) => [c.month, c.weight, `Month ${c.month}: ${c.weight} kg`]);
+  if (pts.length < 2) return "";
+  const first = pts[0][1], last = pts[pts.length - 1][1], d = +(last - first).toFixed(1);
+  return `
+    <div class="ck-chart">
+      <div class="small muted">Weight across ${pts.length} checkpoints: ${first} → ${last} kg (${d > 0 ? "+" : ""}${d} kg)</div>
+      ${svgLine(pts)}
     </div>`;
 }
 
@@ -1400,6 +1508,10 @@ function remindersCard() {
   return `
     <div class="card">
       ${toggle("remCheckin", r.checkin.on, "Monthly check-in nudge", "Shows a check-in card on Today when a new month is due")}
+      <div class="rem-timerow ${r.checkin.on ? "" : "hidden"}" id="remCheckinTimeRow">
+        <span class="muted small">Remind me at</span>
+        <input type="time" id="remCheckinTime" value="${r.checkin.time}" />
+      </div>
       ${toggle("remWorkout", r.workout.on, "Daily workout reminder", "A heads-up if today's session isn't done yet")}
       <div class="rem-timerow ${r.workout.on ? "" : "hidden"}" id="remTimeRow">
         <span class="muted small">Remind me at</span>
@@ -1411,9 +1523,16 @@ function remindersCard() {
 }
 
 function wireReminders() {
-  const rerender = () => { save(STORE.reminders, state.reminders); renderProgress(); };
   document.getElementById("remCheckin")?.addEventListener("change", (e) => {
-    state.reminders.checkin.on = e.target.checked; rerender();
+    state.reminders.checkin.on = e.target.checked;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+    renderProgress();
+  });
+  document.getElementById("remCheckinTime")?.addEventListener("change", (e) => {
+    state.reminders.checkin.time = e.target.value;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
   });
   document.getElementById("remWorkout")?.addEventListener("change", (e) => {
     state.reminders.workout.on = e.target.checked;
@@ -1562,7 +1681,7 @@ function renderProgress() {
         if (!confirm(`Restore backup for "${data.profile.name}" (saved ${when})? This replaces your current data.`)) return;
         state.profile = data.profile;
         state.progress = data.progress;
-        if (data.reminders) { state.reminders = Object.assign({}, DEFAULT_REMINDERS, data.reminders); save(STORE.reminders, state.reminders); }
+        if (data.reminders) { state.reminders = normalizeReminders(data.reminders); save(STORE.reminders, state.reminders); }
         save(STORE.profile, state.profile);
         save(STORE.progress, state.progress);
         render();

@@ -594,6 +594,10 @@ input.exedit { width: 58px; padding: 4px 6px; font-size: max(16px, 0.75rem); }
 .rep-quote { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--gold-soft); border: 1px solid rgba(245, 185, 66, 0.4); font-weight: 700; font-style: italic; }
 .rep-focus { margin-top: 8px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); border: 1px solid rgba(124, 140, 255, 0.3); font-size: 0.9rem; }
 .rep-unlock { margin-top: 12px; text-align: center; font-weight: 800; color: var(--gold); }
+.rep-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.rep-actions .btn { margin-top: 0; width: 100%; }
+.ck-chart { margin: 6px 0 14px; }
+.ck-chart .chart { margin-top: 4px; }
 
 /* ---- Checkpoints card (Progress tab) ---- */
 .ck-empty { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; }
