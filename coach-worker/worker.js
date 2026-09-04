@@ -95,12 +95,13 @@ const PROPOSE_TOOL = {
           properties: {
             type: {
               type: "string",
-              enum: ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin"],
-              description: "adjust_calories nudges the daily calorie target (capped ±300 total by the app). set_*_reminder toggles/schedules a reminder. start_checkin opens the monthly check-in.",
+              enum: ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin", "log_weight", "mark_workout_done"],
+              description: "adjust_calories nudges the daily calorie target (capped ±300 total by the app). set_*_reminder toggles/schedules a reminder. start_checkin opens the monthly check-in. log_weight records today's body weight. mark_workout_done marks today's session complete.",
             },
             deltaKcal: { type: "number", description: "For adjust_calories: change per day, e.g. -100 or 100." },
             on: { type: "boolean", description: "For reminder actions: turn the reminder on (true) or off (false)." },
             time: { type: "string", description: "For reminder actions: 24h time HH:MM, e.g. 18:30." },
+            kg: { type: "number", description: "For log_weight: today's body weight in kg." },
             label: { type: "string", description: "Short human label for the button, e.g. 'Trim 100 kcal/day'." },
           },
           required: ["type", "label"],

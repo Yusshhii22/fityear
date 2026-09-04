@@ -5,6 +5,7 @@ const STORE = {
   progress: "fityear_progress",
   reminders: "fityear_reminders",
   coach: "fityear_coach",
+  coachChat: "fityear_coach_chat",
 };
 
 const DEFAULT_REMINDERS = {
@@ -30,8 +31,9 @@ const state = {
   ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
 };
 
-// Conversational Coach chat history (kept in memory only — not persisted).
-let coachChat = [];
+// Conversational Coach chat history (persisted so it survives reloads).
+let coachChat = load(STORE.coachChat) || [];
+function saveCoachChat() { save(STORE.coachChat, coachChat.filter((m) => !m.pending).slice(-40)); }
 
 function load(key) {
   try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
@@ -384,6 +386,7 @@ function showCheckinReport(rec, gained) {
       ${gained.length ? `<div class="rep-unlock">🎉 New badge${gained.length > 1 ? "s" : ""} unlocked: ${gained.map((b) => `${b.icon} ${b.name}`).join(" · ")}</div>` : ""}
 
       <div class="rep-actions">
+        <button class="btn secondary" id="repCoach">💬 Get coach's take</button>
         <button class="btn secondary" id="repShare">📤 Share my progress</button>
         <button class="btn gold big" id="repDone">Keep it going →</button>
       </div>
@@ -391,6 +394,11 @@ function showCheckinReport(rec, gained) {
   modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCheckin(); });
   modal.querySelector("#repDone").addEventListener("click", () => { closeCheckin(); render(); });
   modal.querySelector("#repShare").addEventListener("click", (e) => shareCheckinCard(rec, e.currentTarget));
+  modal.querySelector("#repCoach").addEventListener("click", () => {
+    closeCheckin();
+    openCoachChat();
+    if (state.coach.endpoint) sendCoachMessage(`I just finished my Month ${rec.month} check-in. How am I tracking toward my goal, and what should I focus on next month?`);
+  });
 }
 
 // Draw a clean shareable card on a canvas (no external libs, works offline) and
@@ -1921,7 +1929,7 @@ function renderCoachBody() {
       <input id="chatText" type="text" autocomplete="off" placeholder="Ask your coach…" />
       <button class="btn tiny" type="submit" id="chatSend">Send</button>
     </form>
-    <div class="chat-foot muted small">Powered by Claude via your own proxy · <button class="linkbtn" id="coachSettingsBtn">settings</button></div>`;
+    <div class="chat-foot muted small">Powered by Claude via your own proxy · <button class="linkbtn" id="coachSettingsBtn">settings</button>${coachChat.length ? ` · <button class="linkbtn" id="coachClearBtn">clear chat</button>` : ""}</div>`;
 
   const log = document.getElementById("chatLog");
   log.scrollTop = log.scrollHeight;
@@ -1929,6 +1937,9 @@ function renderCoachBody() {
   body.querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => sendCoachMessage(b.dataset.ask)));
   body.querySelectorAll("[data-ci]").forEach((b) => b.addEventListener("click", () => applyCoachAction(+b.dataset.ci, +b.dataset.ai)));
   document.getElementById("coachSettingsBtn").addEventListener("click", () => renderCoachSetup(body));
+  document.getElementById("coachClearBtn")?.addEventListener("click", () => {
+    coachChat = []; saveCoachChat(); renderCoachBody();
+  });
 }
 
 function chatBubble(m, ci) {
@@ -1966,11 +1977,12 @@ async function sendCoachMessage(text) {
     coachChat = coachChat.filter((m) => !m.pending);
     coachChat.push({ role: "assistant", content: "⚠️ Couldn't reach your coach endpoint. Check the URL in settings and that it's online." });
   }
+  saveCoachChat();
   renderCoachBody();
 }
 
 // Only keep actions of known types — never trust the endpoint to drive arbitrary changes.
-const COACH_ACTION_TYPES = ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin"];
+const COACH_ACTION_TYPES = ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin", "log_weight", "mark_workout_done"];
 function sanitizeActions(actions) {
   if (!Array.isArray(actions)) return [];
   return actions.filter((a) => a && COACH_ACTION_TYPES.includes(a.type)).slice(0, 4);
@@ -2006,15 +2018,30 @@ function applyCoachAction(ci, ai) {
       note = `Check-in reminder ${state.reminders.checkin.on ? "on · " + state.reminders.checkin.time : "off"}`;
       break;
     }
+    case "log_weight": {
+      const kg = Number(a.kg);
+      if (!kg || kg < 30 || kg > 250) { ok = false; break; }
+      state.progress.weights[todayInfo().week] = kg;
+      save(STORE.progress, state.progress);
+      runAdaptation();
+      note = `Logged ${kg} kg for week ${todayInfo().week}`;
+      break;
+    }
+    case "mark_workout_done": {
+      const t = todayInfo();
+      setDayDone(`w${t.week}d${t.dayIdx}`, true);
+      note = "Marked today complete";
+      break;
+    }
     case "start_checkin": {
-      a.applied = true;
+      a.applied = true; saveCoachChat();
       closeCoach();
       openMonthlyCheckin(currentMonthNo());
       return;
     }
     default: ok = false;
   }
-  if (ok) { a.applied = true; toast(`✓ ${note || "Applied"}`); }
+  if (ok) { a.applied = true; saveCoachChat(); toast(`✓ ${note || "Applied"}`); }
   renderCoachBody();
 }
 
