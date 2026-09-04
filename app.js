@@ -35,6 +35,19 @@ const state = {
 let coachChat = load(STORE.coachChat) || [];
 function saveCoachChat() { save(STORE.coachChat, coachChat.filter((m) => !m.pending).slice(-40)); }
 
+// For a PUBLIC build, set this to your deployed coach Worker URL so the AI coach
+// (and in-app feedback) work with no per-user setup. Leave "" to require each
+// user to paste their own endpoint in-app.
+const DEFAULT_COACH_ENDPOINT = "";
+const COACH_APP_TOKEN = "";   // optional; must match the Worker's APP_TOKEN if you set one
+const APP_VERSION = 25;       // keep in step with the sw.js cache version
+function coachEndpoint() { return (state.coach.endpoint || DEFAULT_COACH_ENDPOINT || "").trim(); }
+function coachHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (COACH_APP_TOKEN) h["x-app-token"] = COACH_APP_TOKEN;
+  return h;
+}
+
 function load(key) {
   try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
 }
@@ -397,7 +410,7 @@ function showCheckinReport(rec, gained) {
   modal.querySelector("#repCoach").addEventListener("click", () => {
     closeCheckin();
     openCoachChat();
-    if (state.coach.endpoint) sendCoachMessage(`I just finished my Month ${rec.month} check-in. How am I tracking toward my goal, and what should I focus on next month?`);
+    if (coachEndpoint()) sendCoachMessage(`I just finished my Month ${rec.month} check-in. How am I tracking toward my goal, and what should I focus on next month?`);
   });
 }
 
@@ -964,6 +977,7 @@ document.addEventListener("click", (e) => {
   const ci = e.target.closest("[data-open-checkin]");
   if (ci) openMonthlyCheckin(+ci.dataset.openCheckin);
   if (e.target.closest("[data-open-coach]")) openCoachChat();
+  if (e.target.closest("[data-open-feedback]")) openFeedback();
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); closeCheckin(); }
@@ -1649,6 +1663,7 @@ function renderProgress() {
         <button class="btn secondary" id="exportBtn">⬇️ Backup</button>
         <button class="btn secondary" id="importBtn">⬆️ Restore</button>
         <button class="btn secondary" id="resetBtn">Edit profile</button>
+        <button class="btn secondary" data-open-feedback>💬 Feedback</button>
         <input type="file" id="importFile" accept=".json,application/json" hidden />
       </div>
       <div class="muted small mt">Backups contain your profile, completed days, weigh-ins and logged lifts — use them to move to a new phone.</div>
@@ -1910,10 +1925,54 @@ function openCoachChat() {
 }
 function closeCoach() { document.getElementById("coachModal")?.remove(); }
 
+// In-app feedback → posts to the same coach Worker (feedback branch).
+function openFeedback() {
+  document.getElementById("fbModal")?.remove();
+  const modal = document.createElement("div");
+  modal.className = "tmodal"; modal.id = "fbModal";
+  const configured = !!coachEndpoint();
+  modal.innerHTML = `
+    <div class="tcard fb-card">
+      <button class="tclose" aria-label="Close">✕</button>
+      <h2>💬 Send feedback</h2>
+      ${configured ? `
+        <p class="muted small">Bugs, ideas, what you love — it goes straight to the FitYear team. Your goal and app version are attached to help us; no personal data or photos.</p>
+        <label class="field"><span>Your feedback</span><textarea id="fbText" rows="5" placeholder="What worked, what didn't, what you'd want next…"></textarea></label>
+        <button class="btn gold" id="fbSend">Send feedback</button>`
+        : `<p class="muted small">Feedback isn't wired up in this build yet. Once a coach endpoint is set (Progress → Coach → settings), feedback sends from here.</p>`}
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) modal.remove(); });
+
+  const send = modal.querySelector("#fbSend");
+  send?.addEventListener("click", async () => {
+    const t = (modal.querySelector("#fbText").value || "").trim();
+    if (!t) { modal.querySelector("#fbText").focus(); return; }
+    send.disabled = true; send.textContent = "Sending…";
+    try {
+      const res = await fetch(coachEndpoint(), {
+        method: "POST", headers: coachHeaders(),
+        body: JSON.stringify({ feedback: t, meta: {
+          appVersion: APP_VERSION, goal: state.profile && state.profile.goal,
+          experience: state.profile && state.profile.experience, level: xpStats().level + 1,
+        } }),
+      });
+      if (!res.ok) throw new Error();
+      modal.querySelector(".fb-card").innerHTML = `
+        <button class="tclose" aria-label="Close">✕</button>
+        <div class="fb-thanks"><div class="fb-emoji">🙏</div><h2>Thank you!</h2>
+          <p class="muted small">Your feedback helps shape FitYear.</p></div>`;
+    } catch {
+      send.disabled = false; send.textContent = "Send feedback";
+      alert("Couldn't send — check your connection and try again.");
+    }
+  });
+}
+
 function renderCoachBody() {
   const body = document.getElementById("coachBody");
   if (!body) return;
-  if (!state.coach.endpoint) { renderCoachSetup(body); return; }
+  if (!coachEndpoint()) { renderCoachSetup(body); return; }
 
   body.innerHTML = `
     <div class="chat-log" id="chatLog">
@@ -1954,16 +2013,16 @@ function formatCoachReply(t) { return esc(t).replace(/\n/g, "<br>"); }
 
 async function sendCoachMessage(text) {
   text = (text || "").trim();
-  if (!text || !state.coach.endpoint) return;
+  if (!text || !coachEndpoint()) return;
   coachChat.push({ role: "user", content: text });
   coachChat.push({ role: "assistant", content: "…", pending: true });
   renderCoachBody();
   const input = document.getElementById("chatText"); if (input) input.value = "";
 
   try {
-    const res = await fetch(state.coach.endpoint, {
+    const res = await fetch(coachEndpoint(), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: coachHeaders(),
       body: JSON.stringify({
         messages: coachChat.filter((m) => !m.pending).map((m) => ({ role: m.role, content: m.content })),
         context: buildCoachContext(),

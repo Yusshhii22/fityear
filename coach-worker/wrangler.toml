@@ -2,8 +2,26 @@ name = "fityear-coach"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-# Non-secret config (optional). The API key is a SECRET — set it with:
+# Non-secret config. The API key is a SECRET — set it with:
 #   wrangler secret put ANTHROPIC_API_KEY
 [vars]
 MODEL = "claude-opus-5"
-# ALLOWED_ORIGIN = "https://yourname.github.io"
+# Lock the coach to your app's origin (recommended for a public beta):
+# ALLOWED_ORIGIN = "https://yusshhii22.github.io"
+# Optional per-IP limit (needs the KV binding below):
+RATE_PER_MIN = "8"
+# Optional global daily cap on coach calls (needs KV):
+# DAILY_CAP = "500"
+# Optional: send in-app feedback to a Discord/Slack/Zapier webhook:
+# FEEDBACK_WEBHOOK = "https://discord.com/api/webhooks/…"
+
+# Rate limiting + feedback storage need a KV namespace. Create one with:
+#   wrangler kv namespace create COACH_KV
+# then paste the printed id below and uncomment:
+# [[kv_namespaces]]
+# binding = "COACH_KV"
+# id = "<your-kv-namespace-id>"
+
+# Secrets (do NOT put these here — set via `wrangler secret put`):
+#   ANTHROPIC_API_KEY   (required)
+#   APP_TOKEN           (optional shared token; app must send x-app-token)
