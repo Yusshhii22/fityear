@@ -49,6 +49,7 @@ export default {
           max_tokens: 1024,
           output_config: { effort: "low" }, // snappy, grounded chat
           system,
+          tools: [PROPOSE_TOOL],
           messages: history.map((m) => ({
             role: m.role === "assistant" ? "assistant" : "user",
             content: String(m.content || "").slice(0, 4000),
@@ -68,8 +69,45 @@ export default {
     if (data.stop_reason === "refusal") {
       return json({ reply: "I can't help with that one — let's keep it about your training, nutrition, or recovery." }, 200, cors);
     }
-    const reply = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    return json({ reply: reply || "(No response — try rephrasing.)" }, 200, cors);
+    const blocks = data.content || [];
+    const reply = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+    // If Claude proposed changes, surface them for the app to apply after the user confirms.
+    const proposal = blocks.find((b) => b.type === "tool_use" && b.name === PROPOSE_TOOL.name);
+    const actions = proposal && Array.isArray(proposal.input && proposal.input.actions) ? proposal.input.actions : [];
+    return json({ reply: reply || (actions.length ? "Here's what I'd suggest — tap to apply:" : "(No response — try rephrasing.)"), actions }, 200, cors);
+  },
+};
+
+// The one tool the coach can call: propose concrete, reversible changes that the
+// APP applies locally after the user taps to confirm. The Worker never mutates
+// anything itself — it only relays the proposal.
+const PROPOSE_TOOL = {
+  name: "propose_plan_changes",
+  description: "Propose concrete FitYear changes for the user to confirm and apply with a tap. Call this only when the user asks for a change or would clearly benefit from one. Always ALSO write a short natural-language explanation as text. Keep proposals small and reversible.",
+  input_schema: {
+    type: "object",
+    properties: {
+      actions: {
+        type: "array",
+        description: "One or more proposed changes.",
+        items: {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              enum: ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin"],
+              description: "adjust_calories nudges the daily calorie target (capped ±300 total by the app). set_*_reminder toggles/schedules a reminder. start_checkin opens the monthly check-in.",
+            },
+            deltaKcal: { type: "number", description: "For adjust_calories: change per day, e.g. -100 or 100." },
+            on: { type: "boolean", description: "For reminder actions: turn the reminder on (true) or off (false)." },
+            time: { type: "string", description: "For reminder actions: 24h time HH:MM, e.g. 18:30." },
+            label: { type: "string", description: "Short human label for the button, e.g. 'Trim 100 kcal/day'." },
+          },
+          required: ["type", "label"],
+        },
+      },
+    },
+    required: ["actions"],
   },
 };
 
@@ -88,6 +126,7 @@ function buildSystemPrompt(ctx) {
     "Answer using the user's real data below. Be specific and encouraging; prefer 2–5 sentences unless asked for detail.",
     "You are not a doctor. For pain, injury, or medical concerns, recommend seeing a professional. Never give medical, drug, or extreme-diet advice.",
     "If data is missing, say what to log so you can help next time.",
+    "When a concrete change would help (e.g. nudging calories, setting a reminder, or doing a monthly check-in), call the propose_plan_changes tool with small, reversible actions AND explain them in your text. The user taps to apply — you never change anything directly.",
     "",
     "== User data ==",
     JSON.stringify(ctx, null, 2),

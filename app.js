@@ -1909,7 +1909,7 @@ function renderCoachBody() {
 
   body.innerHTML = `
     <div class="chat-log" id="chatLog">
-      ${coachChat.length ? coachChat.map(chatBubble).join("")
+      ${coachChat.length ? coachChat.map((m, i) => chatBubble(m, i)).join("")
         : `<div class="chat-empty">Ask me anything about your training, nutrition or recovery — I can see your plan and progress. Try:
              <div class="chat-suggests">
                <button class="chip" data-ask="Why am I not losing weight?">Why am I not losing weight?</button>
@@ -1927,11 +1927,16 @@ function renderCoachBody() {
   log.scrollTop = log.scrollHeight;
   document.getElementById("chatForm").addEventListener("submit", (e) => { e.preventDefault(); sendCoachMessage(document.getElementById("chatText").value); });
   body.querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => sendCoachMessage(b.dataset.ask)));
+  body.querySelectorAll("[data-ci]").forEach((b) => b.addEventListener("click", () => applyCoachAction(+b.dataset.ci, +b.dataset.ai)));
   document.getElementById("coachSettingsBtn").addEventListener("click", () => renderCoachSetup(body));
 }
 
-function chatBubble(m) {
-  return `<div class="bubble ${m.role === "user" ? "me" : "coach"} ${m.pending ? "pending" : ""}">${m.role === "user" ? esc(m.content) : formatCoachReply(m.content)}</div>`;
+function chatBubble(m, ci) {
+  if (m.role === "user") return `<div class="bubble me">${esc(m.content)}</div>`;
+  const actions = (m.actions || []).map((a, ai) => a.applied
+    ? `<span class="act-chip done">✓ ${esc(a.label || a.type)}</span>`
+    : `<button class="act-chip" data-ci="${ci}" data-ai="${ai}">${esc(a.label || a.type)}</button>`).join("");
+  return `<div class="bubble coach ${m.pending ? "pending" : ""}">${formatCoachReply(m.content)}${actions ? `<div class="act-row">${actions}</div>` : ""}</div>`;
 }
 // Light formatting: preserve line breaks, escape everything else.
 function formatCoachReply(t) { return esc(t).replace(/\n/g, "<br>"); }
@@ -1956,11 +1961,60 @@ async function sendCoachMessage(text) {
     const data = await res.json().catch(() => ({}));
     coachChat = coachChat.filter((m) => !m.pending);
     if (!res.ok || data.error) coachChat.push({ role: "assistant", content: `⚠️ ${data.error || "Coach unavailable (" + res.status + ")."}` });
-    else coachChat.push({ role: "assistant", content: data.reply || "(No reply.)" });
+    else coachChat.push({ role: "assistant", content: data.reply || "(No reply.)", actions: sanitizeActions(data.actions) });
   } catch (e) {
     coachChat = coachChat.filter((m) => !m.pending);
     coachChat.push({ role: "assistant", content: "⚠️ Couldn't reach your coach endpoint. Check the URL in settings and that it's online." });
   }
+  renderCoachBody();
+}
+
+// Only keep actions of known types — never trust the endpoint to drive arbitrary changes.
+const COACH_ACTION_TYPES = ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin"];
+function sanitizeActions(actions) {
+  if (!Array.isArray(actions)) return [];
+  return actions.filter((a) => a && COACH_ACTION_TYPES.includes(a.type)).slice(0, 4);
+}
+
+// Apply a coach-proposed change to local state, only when the user taps it.
+function applyCoachAction(ci, ai) {
+  const a = coachChat[ci] && coachChat[ci].actions && coachChat[ci].actions[ai];
+  if (!a || a.applied) return;
+  let ok = true, note = "";
+  switch (a.type) {
+    case "adjust_calories": {
+      const prev = state.progress.calorieDelta || 0;
+      const next = Math.max(-300, Math.min(300, prev + (Number(a.deltaKcal) || 0)));
+      state.progress.calorieDelta = next;
+      save(STORE.progress, state.progress);
+      note = `Calorie target ${next >= 0 ? "+" : ""}${next} kcal/day`;
+      break;
+    }
+    case "set_workout_reminder": {
+      if (typeof a.on === "boolean") state.reminders.workout.on = a.on;
+      if (/^\d{1,2}:\d{2}$/.test(a.time || "")) state.reminders.workout.time = a.time;
+      save(STORE.reminders, state.reminders);
+      scheduleReminders();
+      note = `Workout reminder ${state.reminders.workout.on ? "on · " + state.reminders.workout.time : "off"}`;
+      break;
+    }
+    case "set_checkin_reminder": {
+      if (typeof a.on === "boolean") state.reminders.checkin.on = a.on;
+      if (/^\d{1,2}:\d{2}$/.test(a.time || "")) state.reminders.checkin.time = a.time;
+      save(STORE.reminders, state.reminders);
+      scheduleReminders();
+      note = `Check-in reminder ${state.reminders.checkin.on ? "on · " + state.reminders.checkin.time : "off"}`;
+      break;
+    }
+    case "start_checkin": {
+      a.applied = true;
+      closeCoach();
+      openMonthlyCheckin(currentMonthNo());
+      return;
+    }
+    default: ok = false;
+  }
+  if (ok) { a.applied = true; toast(`✓ ${note || "Applied"}`); }
   renderCoachBody();
 }
 
