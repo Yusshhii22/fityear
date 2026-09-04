@@ -3,13 +3,50 @@
 const STORE = {
   profile: "fityear_profile",
   progress: "fityear_progress",
+  reminders: "fityear_reminders",
+  coach: "fityear_coach",
+  coachChat: "fityear_coach_chat",
 };
+
+const DEFAULT_REMINDERS = {
+  workout: { on: false, time: "18:00" },
+  checkin: { on: true, time: "09:00" },
+};
+
+// Merge stored prefs over defaults one level deep, so new sub-fields (like a
+// newly-added checkin time) fill in for people who saved prefs earlier.
+function normalizeReminders(saved) {
+  const s = saved || {};
+  return {
+    workout: Object.assign({}, DEFAULT_REMINDERS.workout, s.workout),
+    checkin: Object.assign({}, DEFAULT_REMINDERS.checkin, s.checkin),
+  };
+}
 
 const state = {
   profile: load(STORE.profile),
   progress: load(STORE.progress) || { completed: {}, weights: {}, currentWeek: 1 },
+  reminders: normalizeReminders(load(STORE.reminders)),
+  coach: load(STORE.coach) || { endpoint: "" },
   ui: { tab: "today", chartEx: null, planPage: "week", lastTab: null, editingProfile: false },
 };
+
+// Conversational Coach chat history (persisted so it survives reloads).
+let coachChat = load(STORE.coachChat) || [];
+function saveCoachChat() { save(STORE.coachChat, coachChat.filter((m) => !m.pending).slice(-40)); }
+
+// For a PUBLIC build, set this to your deployed coach Worker URL so the AI coach
+// (and in-app feedback) work with no per-user setup. Leave "" to require each
+// user to paste their own endpoint in-app.
+const DEFAULT_COACH_ENDPOINT = "";
+const COACH_APP_TOKEN = "";   // optional; must match the Worker's APP_TOKEN if you set one
+const APP_VERSION = 25;       // keep in step with the sw.js cache version
+function coachEndpoint() { return (state.coach.endpoint || DEFAULT_COACH_ENDPOINT || "").trim(); }
+function coachHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (COACH_APP_TOKEN) h["x-app-token"] = COACH_APP_TOKEN;
+  return h;
+}
 
 function load(key) {
   try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
@@ -37,14 +74,16 @@ function getTargets() {
 
 const LEVELS = ["Rookie", "Starter", "Regular", "Committed", "Disciplined", "Athlete", "Machine", "Beast", "Legend", "Icon"];
 const XP_PER_LEVEL = 300;
+const XP_CHECKIN = 50; // a monthly check-in is worth more than a weekly weigh-in
 
 function xpStats() {
   const done = Object.values(state.progress.completed).filter(Boolean).length;
   const lifts = Object.values(state.progress.lifts || {}).reduce((s, arr) => s + arr.length, 0);
   const weighIns = Object.keys(state.progress.weights || {}).length;
-  const xp = done * 25 + lifts * 5 + weighIns * 15;
+  const checkins = (state.progress.checkins || []).length;
+  const xp = done * 25 + lifts * 5 + weighIns * 15 + checkins * XP_CHECKIN;
   const level = Math.min(Math.floor(xp / XP_PER_LEVEL), LEVELS.length - 1);
-  return { done, lifts, weighIns, xp, level, levelName: LEVELS[level], toNext: Math.min(1, (xp % XP_PER_LEVEL) / XP_PER_LEVEL) };
+  return { done, lifts, weighIns, checkins, xp, level, levelName: LEVELS[level], toNext: Math.min(1, (xp % XP_PER_LEVEL) / XP_PER_LEVEL) };
 }
 
 function streaks() {
@@ -71,6 +110,9 @@ const BADGES = [
   { icon: "⚖️", name: "Data Driven", desc: "Do 4 weekly check-ins", test: (s) => s.weighIns >= 4 },
   { icon: "💪", name: "Half Century", desc: "Complete 50 days", test: (s) => s.done >= 50 },
   { icon: "🏆", name: "Century Club", desc: "Complete 100 days", test: (s) => s.done >= 100 },
+  { icon: "📸", name: "Checkpoint", desc: "Log your first monthly check-in", test: (s) => s.checkins >= 1 },
+  { icon: "📊", name: "Transformation", desc: "Log 3 monthly check-ins", test: (s) => s.checkins >= 3 },
+  { icon: "🗓️", name: "Year of You", desc: "Log 6 monthly check-ins", test: (s) => s.checkins >= 6 },
 ];
 
 function badgeState() {
@@ -92,6 +134,424 @@ function confetti() {
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 1400);
   }
+}
+
+/* ================= Monthly check-in ================= */
+// A "month" is a block of 4 program weeks (the journey is ~13 of them). Each
+// month you snapshot weight, tape measures, a photo and how you feel — richer
+// than the weekly weigh-in, worth more XP, and the source of the progress report.
+
+const MONTH_WEEKS = 4;
+const MONTHS_TOTAL = 13;
+const MEASURES = [
+  ["waist", "Waist"], ["chest", "Chest"], ["arms", "Arms"], ["thighs", "Thighs"],
+];
+const RATINGS = [
+  ["energy", "⚡", "Energy"], ["sleep", "😴", "Sleep"], ["motivation", "🔥", "Motivation"],
+];
+
+function monthOfWeek(week) { return Math.min(MONTHS_TOTAL, Math.max(1, Math.ceil(week / MONTH_WEEKS))); }
+function currentMonthNo() { return state.profile ? monthOfWeek(todayInfo().week) : 1; }
+function allCheckins() { return state.progress.checkins || []; }
+function getCheckin(m) { return allCheckins().find((c) => c.month === m) || null; }
+function lastCheckinBefore(m) {
+  const cs = allCheckins().filter((c) => c.month < m).sort((a, b) => a.month - b.month);
+  return cs[cs.length - 1] || null;
+}
+function checkinDue() {
+  return !!state.profile && state.reminders.checkin.on !== false && !getCheckin(currentMonthNo());
+}
+// Consecutive months with a check-in, ending at the most recent completed month.
+function checkinStreak() {
+  const done = new Set(allCheckins().map((c) => c.month));
+  let start = currentMonthNo();
+  if (!done.has(start)) start--; // current month still open — don't penalise it
+  let s = 0;
+  for (let m = start; m >= 1; m--) { if (done.has(m)) s++; else break; }
+  return s;
+}
+function daysDoneInMonth(m) {
+  const lo = (m - 1) * MONTH_WEEKS + 1, hi = m * MONTH_WEEKS;
+  let n = 0;
+  for (const k in state.progress.completed) {
+    if (!state.progress.completed[k]) continue;
+    const mt = /^w(\d+)d\d+$/.exec(k);
+    if (mt && +mt[1] >= lo && +mt[1] <= hi) n++;
+  }
+  return n;
+}
+
+// Which direction of change counts as progress, given the user's goal.
+// true = smaller is better, false = bigger is better, null = neutral (no colour).
+function weightGoodDown() {
+  const g = state.profile.goal;
+  return g === "gain" ? false : g === "lose" ? true : null;
+}
+function measureGoodDown(id) {
+  const g = state.profile.goal;
+  if (g === "maintain") return null;          // holding steady — don't judge either way
+  if (id === "waist") return true;            // waist is the fat proxy: smaller wins
+  return g === "gain" ? false : true;         // muscle sites: bigger on a bulk, smaller on a cut
+}
+// Shared delta chip: sign arrow + goal-aware good/warn colour (or neutral).
+function deltaChip(cur, was, unit, goodDown) {
+  if (was == null || cur == null) return `<span class="dl-flat">—</span>`;
+  const d = +(cur - was).toFixed(1);
+  const body = `${d > 0 ? "▲ +" : d < 0 ? "▼ " : ""}${d}${unit}`;
+  if (d === 0) return `<span class="dl-flat">±0${unit}</span>`;
+  if (goodDown == null) return `<span class="dl-flat">${body}</span>`;
+  const good = goodDown ? d < 0 : d > 0;
+  return `<span class="dl ${good ? "dl-good" : "dl-warn"}">${body}</span>`;
+}
+
+// Downscale a chosen photo to a small JPEG data URL so a year of check-ins
+// stays well within localStorage limits (~40–70 KB each).
+function downscaleImage(file, max = 420) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+let ciForm = null; // transient form state while the modal is open
+
+function openMonthlyCheckin(month) {
+  closeCheckin();
+  const m = month || currentMonthNo();
+  const existing = getCheckin(m);
+  const prev = lastCheckinBefore(m);
+  const seed = existing || {};
+  // Prefill weight from the latest weigh-in / last check-in so it's one tap for most.
+  const lastWeight = seed.weight
+    || (Object.entries(state.progress.weights || {}).sort((a, b) => a[0] - b[0]).pop() || [])[1]
+    || (prev && prev.weight);
+  ciForm = {
+    energy: seed.energy || 0, sleep: seed.sleep || 0, motivation: seed.motivation || 0,
+    photo: seed.photo || null,
+  };
+
+  const modal = document.createElement("div");
+  modal.className = "tmodal";
+  modal.id = "checkinModal";
+  modal.innerHTML = `
+    <div class="tcard checkin-card">
+      <button class="tclose" aria-label="Close">✕</button>
+      <div class="ci-hero">
+        <div class="ci-badge">📸</div>
+        <h2>Month ${m} check-in</h2>
+        <p class="muted small">A 60-second snapshot of where you are. Future-you will love the receipts. <strong>+${XP_CHECKIN} XP</strong></p>
+      </div>
+
+      <label class="field big-field"><span>Body weight (kg)</span>
+        <input id="ciWeight" type="number" step="0.1" min="30" max="250" placeholder="e.g. 74" value="${lastWeight ?? ""}" /></label>
+
+      <div class="ci-section-label">📐 Tape measures <em>(optional)</em></div>
+      <div class="measure-grid">
+        ${MEASURES.map(([id, label]) => `
+          <label class="field"><span>${label} (cm)</span>
+            <input id="ci_${id}" type="number" step="0.1" min="10" max="250" placeholder="—" value="${seed[id] ?? ""}" /></label>`).join("")}
+      </div>
+
+      <div class="ci-section-label">💚 How did this month feel?</div>
+      <div id="ciRatings">${RATINGS.map(([id, emoji, label]) => ratingRow(id, emoji, label)).join("")}</div>
+
+      <div class="ci-section-label">📷 Progress photo <em>(optional, stays on your device)</em></div>
+      <div class="photo-drop" id="ciPhotoDrop">
+        ${ciForm.photo ? `<img src="${ciForm.photo}" alt="Progress photo" />` : `<span class="pd-hint">＋ Add a photo</span>`}
+        <input id="ciPhoto" type="file" accept="image/*" capture="environment" hidden />
+      </div>
+
+      <label class="field"><span>🏆 Biggest win this month</span>
+        <input id="ciWin" type="text" maxlength="120" placeholder="Squatted bodyweight! / Jeans fit again" value="${seed.win ? esc(seed.win) : ""}" /></label>
+      <label class="field"><span>🎯 One focus for next month</span>
+        <input id="ciFocus" type="text" maxlength="120" placeholder="Hit protein every day" value="${seed.focus ? esc(seed.focus) : ""}" /></label>
+
+      <button class="btn gold big" id="ciSubmit">${existing ? "Update check-in" : `Save check-in · +${XP_CHECKIN} XP`}</button>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal || e.target.closest(".tclose")) closeCheckin();
+  });
+  modal.querySelectorAll("[data-rate]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const id = b.dataset.rate;
+      ciForm[id] = ciForm[id] === +b.dataset.val ? 0 : +b.dataset.val; // tap again to clear
+      const row = b.closest(".ratedots");
+      row.querySelectorAll(".ratedot").forEach((d) => d.classList.toggle("on", +d.dataset.val <= ciForm[id]));
+    }));
+
+  const drop = modal.querySelector("#ciPhotoDrop");
+  const fileInput = modal.querySelector("#ciPhoto");
+  drop.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const f = fileInput.files[0];
+    if (!f) return;
+    try {
+      ciForm.photo = await downscaleImage(f);
+      drop.innerHTML = `<img src="${ciForm.photo}" alt="Progress photo" />`;
+      drop.appendChild(fileInput);
+    } catch { alert("Couldn't read that image — try another."); }
+  });
+
+  modal.querySelector("#ciSubmit").addEventListener("click", () => submitCheckin(m));
+}
+
+function ratingRow(id, emoji, label) {
+  const val = (ciForm && ciForm[id]) || 0;
+  const dots = [1, 2, 3, 4, 5].map((n) =>
+    `<button type="button" class="ratedot ${n <= val ? "on" : ""}" data-rate="${id}" data-val="${n}">${emoji}</button>`).join("");
+  return `<div class="raterow"><span class="ratelabel">${label}</span><span class="ratedots">${dots}</span></div>`;
+}
+
+function submitCheckin(m) {
+  const num = (id) => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? undefined : v; };
+  const weight = num("ciWeight");
+  if (!weight) { alert("Add your weight to save the check-in — the rest is optional."); document.getElementById("ciWeight").focus(); return; }
+
+  const before = badgeState().filter((b) => b.unlocked).map((b) => b.name);
+  const rec = {
+    month: m, week: todayInfo().week, date: new Date().toISOString().slice(0, 10),
+    weight,
+    win: (document.getElementById("ciWin").value || "").trim(),
+    focus: (document.getElementById("ciFocus").value || "").trim(),
+    energy: ciForm.energy || undefined, sleep: ciForm.sleep || undefined, motivation: ciForm.motivation || undefined,
+    photo: ciForm.photo || undefined,
+  };
+  MEASURES.forEach(([id]) => { const v = num("ci_" + id); if (v !== undefined) rec[id] = v; });
+
+  state.progress.checkins = allCheckins().filter((c) => c.month !== m);
+  state.progress.checkins.push(rec);
+  state.progress.checkins.sort((a, b) => a.month - b.month);
+  // Feed the weight into the weekly trend so calorie adaptation benefits too.
+  state.progress.weights[rec.week] = weight;
+  try {
+    save(STORE.progress, state.progress);
+  } catch (err) {
+    // Almost always a storage-quota trip from the photo — drop it and retry.
+    delete rec.photo;
+    try { save(STORE.progress, state.progress); alert("Saved — but the photo was too large to store, so it wasn't kept."); }
+    catch { alert("Couldn't save: device storage is full. Try removing old backups/photos."); return; }
+  }
+  runAdaptation();
+
+  const gained = badgeState().filter((b) => b.unlocked && !before.includes(b.name));
+  confetti(); setTimeout(confetti, 220);
+  showCheckinReport(rec, gained);
+}
+
+function showCheckinReport(rec, gained) {
+  const prev = lastCheckinBefore(rec.month);
+  const modal = document.getElementById("checkinModal") || (() => {
+    const d = document.createElement("div"); d.className = "tmodal"; d.id = "checkinModal";
+    document.body.appendChild(d); return d;
+  })();
+
+  const daysM = daysDoneInMonth(rec.month);
+  const strk = checkinStreak();
+
+  const measureRows = MEASURES.filter(([id]) => rec[id] != null || (prev && prev[id] != null)).map(([id, label]) => `
+    <div class="rep-mrow"><span>${label}</span><span>${rec[id] != null ? rec[id] + " cm" : "—"}</span>${deltaChip(rec[id], prev && prev[id], " cm", measureGoodDown(id))}</div>`).join("");
+
+  const ratingBar = (id, emoji, label) => {
+    const v = rec[id]; if (!v) return "";
+    return `<div class="rep-rate"><span>${label}</span><span class="rr-dots">${"●".repeat(v)}${"○".repeat(5 - v)}</span><span>${emoji}</span></div>`;
+  };
+
+  modal.innerHTML = `
+    <div class="tcard report-card">
+      <button class="tclose" aria-label="Close">✕</button>
+      <div class="rep-hero">
+        <div class="rep-spark">✨</div>
+        <h2>Month ${rec.month} in the books</h2>
+        <p class="muted small">${strk > 1 ? `${strk}-month check-in streak 🔥 — that's how transformations happen.` : `Baseline locked in. Come back next month to watch it move.`}</p>
+      </div>
+
+      <div class="rep-stats">
+        <div class="rep-stat"><div class="rs-val">+${XP_CHECKIN}</div><div class="rs-lbl">XP earned</div></div>
+        <div class="rep-stat"><div class="rs-val">${daysM}</div><div class="rs-lbl">days trained</div></div>
+        <div class="rep-stat"><div class="rs-val">${rec.weight}<span class="rs-unit">kg</span></div><div class="rs-lbl">${prev ? deltaChip(rec.weight, prev.weight, "", weightGoodDown()) : "baseline"}</div></div>
+        <div class="rep-stat"><div class="rs-val">${strk}</div><div class="rs-lbl">month streak</div></div>
+      </div>
+
+      ${measureRows ? `<div class="ci-section-label">📐 Measurements</div><div class="rep-measures">${measureRows}</div>` : ""}
+      ${RATINGS.some(([id]) => rec[id]) ? `<div class="ci-section-label">💚 Feel</div><div class="rep-rates">${RATINGS.map(([id, e, l]) => ratingBar(id, e, l)).join("")}</div>` : ""}
+
+      ${rec.photo || (prev && prev.photo) ? `
+        <div class="ci-section-label">📷 ${prev && prev.photo && rec.photo ? "Then → now" : "Progress photo"}</div>
+        <div class="rep-photos">
+          ${prev && prev.photo ? `<figure><img src="${prev.photo}" alt="Previous"/><figcaption>Month ${prev.month}</figcaption></figure>` : ""}
+          ${rec.photo ? `<figure><img src="${rec.photo}" alt="Now"/><figcaption>Month ${rec.month}</figcaption></figure>` : ""}
+        </div>` : ""}
+
+      ${rec.win ? `<div class="rep-quote">🏆 “${esc(rec.win)}”</div>` : ""}
+      ${rec.focus ? `<div class="rep-focus">🎯 Next month: <strong>${esc(rec.focus)}</strong></div>` : ""}
+
+      ${gained.length ? `<div class="rep-unlock">🎉 New badge${gained.length > 1 ? "s" : ""} unlocked: ${gained.map((b) => `${b.icon} ${b.name}`).join(" · ")}</div>` : ""}
+
+      <div class="rep-actions">
+        <button class="btn secondary" id="repCoach">💬 Get coach's take</button>
+        <button class="btn secondary" id="repShare">📤 Share my progress</button>
+        <button class="btn gold big" id="repDone">Keep it going →</button>
+      </div>
+    </div>`;
+  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCheckin(); });
+  modal.querySelector("#repDone").addEventListener("click", () => { closeCheckin(); render(); });
+  modal.querySelector("#repShare").addEventListener("click", (e) => shareCheckinCard(rec, e.currentTarget));
+  modal.querySelector("#repCoach").addEventListener("click", () => {
+    closeCheckin();
+    openCoachChat();
+    if (coachEndpoint()) sendCoachMessage(`I just finished my Month ${rec.month} check-in. How am I tracking toward my goal, and what should I focus on next month?`);
+  });
+}
+
+// Draw a clean shareable card on a canvas (no external libs, works offline) and
+// hand it to the native share sheet, falling back to a PNG download.
+async function shareCheckinCard(rec, btn) {
+  const prev = lastCheckinBefore(rec.month);
+  const W = 1080, H = 1080, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  // Background — brand gradient.
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#16203a"); bg.addColorStop(1, "#070b14");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgba(124,140,255,0.14)";
+  g.beginPath(); g.arc(W * 0.8, H * 0.12, 260, 0, 7); g.fill();
+
+  const center = (t, y, font, color) => { g.font = font; g.fillStyle = color; g.textAlign = "center"; g.fillText(t, W / 2, y); };
+  center("FitYear", 150, "800 54px Manrope, sans-serif", "#7c8cff");
+  center(`Month ${rec.month} check-in`, 230, "800 74px Manrope, sans-serif", "#f4f6fc");
+
+  // Big weight + delta.
+  center(`${rec.weight} kg`, 420, "800 150px Manrope, sans-serif", "#ffffff");
+  if (prev) {
+    const d = +(rec.weight - prev.weight).toFixed(1);
+    const gd = weightGoodDown();
+    const good = gd == null ? null : (gd ? d < 0 : d > 0);
+    center(`${d > 0 ? "▲ +" : d < 0 ? "▼ " : "±"}${d} kg since Month ${prev.month}`, 500,
+      "700 46px Manrope, sans-serif", good == null ? "#8b97b5" : good ? "#3ddc84" : "#f5b942");
+  } else {
+    center("baseline set", 500, "700 46px Manrope, sans-serif", "#8b97b5");
+  }
+
+  // Stat trio.
+  const strk = checkinStreak(), daysM = daysDoneInMonth(rec.month);
+  const stats = [[`${daysM}`, "days trained"], [`${strk}`, "month streak"], [`+${XP_CHECKIN}`, "XP earned"]];
+  stats.forEach(([v, l], i) => {
+    const x = W * (0.25 + i * 0.25);
+    g.textAlign = "center";
+    g.font = "800 84px Manrope, sans-serif"; g.fillStyle = "#f5b942"; g.fillText(v, x, 680);
+    g.font = "600 34px Manrope, sans-serif"; g.fillStyle = "#8b97b5"; g.fillText(l, x, 730);
+  });
+
+  if (rec.win) {
+    g.textAlign = "center"; g.font = "italic 700 46px Manrope, sans-serif"; g.fillStyle = "#f4f6fc";
+    const win = rec.win.length > 40 ? rec.win.slice(0, 39) + "…" : rec.win;
+    g.fillText(`🏆 “${win}”`, W / 2, 860);
+  }
+  center("Your 1-year fitness journey", 1000, "600 36px Manrope, sans-serif", "#8b97b5");
+
+  const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+  if (!blob) { alert("Couldn't build the image."); return; }
+  const file = new File([blob], `fityear-month-${rec.month}.png`, { type: "image/png" });
+  const shareText = `Month ${rec.month} of my FitYear journey 💪`;
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: shareText });
+      return;
+    }
+  } catch { if (btn) { /* user cancelled share — fall through to download */ } }
+  // Fallback: download the PNG.
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+  URL.revokeObjectURL(a.href);
+  if (btn) { btn.textContent = "✓ Saved image"; setTimeout(() => { btn.textContent = "📤 Share my progress"; }, 2000); }
+}
+
+function closeCheckin() { document.getElementById("checkinModal")?.remove(); ciForm = null; }
+
+// Inviting banner that pulls people into the check-in when one is due.
+function checkinBanner() {
+  if (!checkinDue()) return "";
+  const m = currentMonthNo();
+  return `
+    <button class="checkin-nudge" data-open-checkin="${m}">
+      <span class="cn-emoji">📸</span>
+      <span class="cn-body">
+        <strong>Month ${m} check-in is ready</strong>
+        <span class="small">Snapshot your progress · +${XP_CHECKIN} XP · unlock a badge</span>
+      </span>
+      <span class="cn-cta">Start →</span>
+    </button>`;
+}
+
+/* ================= Reminders ================= */
+// A pure client-side PWA can't reliably fire background alerts, so the always-on
+// mechanism is the in-app nudge banner. Notifications are a bonus that fire while
+// the app is open (or recently backgrounded) at the chosen time.
+
+let reminderTimers = [];
+
+function notifSupported() { return typeof Notification !== "undefined" && "serviceWorker" in navigator; }
+function notifGranted() { return notifSupported() && Notification.permission === "granted"; }
+
+async function showNotif(title, body) {
+  if (!notifGranted()) return;
+  const opts = { body, icon: "icon-192.png", badge: "icon-192.png", tag: "fityear", renotify: true };
+  try { const reg = await navigator.serviceWorker.ready; reg.showNotification(title, opts); }
+  catch { try { new Notification(title, opts); } catch { /* ignore */ } }
+}
+
+function msUntilToday(hhmm) {
+  const [h, mi] = (hhmm || "").split(":").map(Number);
+  if (isNaN(h)) return null;
+  const t = new Date(); t.setHours(h, mi || 0, 0, 0);
+  const diff = t - Date.now();
+  return diff > 1000 ? diff : null; // only future times today; tomorrow is caught on next open
+}
+
+function todayWorkoutDone() {
+  if (!state.profile) return true;
+  const t = todayInfo();
+  return !!state.progress.completed[`w${t.week}d${t.dayIdx}`];
+}
+
+function scheduleReminders() {
+  reminderTimers.forEach(clearTimeout);
+  reminderTimers = [];
+  if (!state.profile || !notifGranted()) return;
+  const r = state.reminders;
+  if (r.workout.on) {
+    const ms = msUntilToday(r.workout.time);
+    if (ms != null) reminderTimers.push(setTimeout(() => {
+      if (!todayWorkoutDone()) showNotif("Time to train 💪", `Day ${todayInfo().dayNum} is waiting — keep your 🔥 streak alive!`);
+    }, ms));
+  }
+  if (r.checkin.on) {
+    const ms = msUntilToday(r.checkin.time);
+    if (ms != null) reminderTimers.push(setTimeout(() => {
+      if (checkinDue()) showNotif("Monthly check-in ready 📸", `Snapshot your Month ${currentMonthNo()} progress and earn +${XP_CHECKIN} XP.`);
+    }, ms));
+  }
+}
+
+async function requestNotif() {
+  if (!notifSupported()) { alert("This browser doesn't support notifications."); return; }
+  try {
+    const p = await Notification.requestPermission();
+    if (p === "granted") { showNotif("Notifications on 🔔", "We'll nudge you at your reminder time while FitYear is open."); scheduleReminders(); }
+    if (state.ui.tab === "progress") renderProgress();
+  } catch { /* ignore */ }
 }
 
 /* ================= Today helpers ================= */
@@ -514,9 +974,13 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest(".exname");
   if (b) openTutorial(b.dataset.ex);
   if (e.target.closest(".helpbtn")) openHelp();
+  const ci = e.target.closest("[data-open-checkin]");
+  if (ci) openMonthlyCheckin(+ci.dataset.openCheckin);
+  if (e.target.closest("[data-open-coach]")) openCoachChat();
+  if (e.target.closest("[data-open-feedback]")) openFeedback();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); }
+  if (e.key === "Escape") { closeTutorial(); closeHelp(); endTour(); closeCheckin(); }
 });
 
 /* ================= Shared blocks ================= */
@@ -675,6 +1139,8 @@ function renderToday() {
       </div>
     </div>
 
+    ${checkinBanner()}
+
     <div class="card day-focus">
       <div class="df-head">
         <h2>${day.isTraining ? `🏋️ ${day.workout.label}` : "🌿 Rest & Recovery"}</h2>
@@ -683,6 +1149,8 @@ function renderToday() {
       ${day.isTraining ? workoutTable(day.workout, t.week, ph) : `<div class="restnote">${day.restNote}</div>`}
       <button class="btn ${done ? "ghost" : "gold"}" id="doneBtn">${done ? "Undo — not done yet" : `Mark Day ${t.dayNum} complete (+25 XP)`}</button>
     </div>
+
+    ${coachCard(2)}
 
     <div class="card">${mealsBlock(day.meals, targets.calories)}</div>
     ${suppCard(t.week, day.dayIdx, day.isTraining)}
@@ -991,6 +1459,125 @@ function wireGrocery(week, targets) {
 
 /* ================= Progress tab ================= */
 
+function checkpointsCard() {
+  const cs = allCheckins();
+  const m = currentMonthNo();
+  const strk = checkinStreak();
+  const due = checkinDue();
+  const cta = due
+    ? `<button class="btn gold" data-open-checkin="${m}">📸 Check in for Month ${m} · +${XP_CHECKIN} XP</button>`
+    : `<button class="btn secondary" data-open-checkin="${m}">✓ Month ${m} done — view / edit</button>`;
+
+  if (!cs.length) {
+    return `
+      <div class="card ck-empty">
+        <div class="ck-empty-emoji">📸</div>
+        <div><strong>Take your Month 1 snapshot</strong>
+          <div class="muted small">Weight, tape measures, a photo and how you feel — your baseline to measure everything against. Takes a minute, earns +${XP_CHECKIN} XP.</div></div>
+        ${cta}
+      </div>`;
+  }
+
+  const rows = cs.slice().reverse().map((c) => {
+    const prev = lastCheckinBefore(c.month);
+    const wDelta = prev
+      ? deltaChip(c.weight, prev.weight, " kg", weightGoodDown())
+      : `<span class="dl-flat">baseline</span>`;
+    return `
+      <button class="ck-row" data-open-checkin="${c.month}">
+        ${c.photo ? `<img class="ck-thumb" src="${c.photo}" alt="" />` : `<span class="ck-thumb ck-noimg">📅</span>`}
+        <span class="ck-main">
+          <strong>Month ${c.month}</strong> <span class="muted small">· ${c.date}</span>
+          ${c.win ? `<span class="ck-win small">🏆 ${esc(c.win)}</span>` : ""}
+        </span>
+        <span class="ck-right"><span class="ck-w">${c.weight} kg</span>${wDelta}</span>
+      </button>`;
+  }).join("");
+
+  return `
+    <div class="card">
+      <div class="ck-head">
+        <div class="ck-streak"><span class="ck-streak-num">${strk}</span><span class="muted small">month${strk === 1 ? "" : "s"} in a row</span></div>
+        ${cta}
+      </div>
+      ${checkpointChart(cs)}
+      <div class="ck-list">${rows}</div>
+    </div>`;
+}
+
+// Weight across all monthly checkpoints, reusing the shared inline-SVG line.
+function checkpointChart(cs) {
+  const pts = cs.filter((c) => c.weight != null).sort((a, b) => a.month - b.month)
+    .map((c) => [c.month, c.weight, `Month ${c.month}: ${c.weight} kg`]);
+  if (pts.length < 2) return "";
+  const first = pts[0][1], last = pts[pts.length - 1][1], d = +(last - first).toFixed(1);
+  return `
+    <div class="ck-chart">
+      <div class="small muted">Weight across ${pts.length} checkpoints: ${first} → ${last} kg (${d > 0 ? "+" : ""}${d} kg)</div>
+      ${svgLine(pts)}
+    </div>`;
+}
+
+function remindersCard() {
+  const r = state.reminders;
+  const perm = notifSupported() ? Notification.permission : "unsupported";
+  const status = {
+    granted: `<span class="rem-ok">🔔 Notifications on</span>`,
+    denied: `<span class="rem-off">Notifications blocked in your browser settings</span>`,
+    default: `<button class="btn secondary tiny" id="enableNotifBtn">Enable notifications</button>`,
+    unsupported: `<span class="muted small">Notifications aren't supported on this browser</span>`,
+  }[perm];
+
+  const toggle = (id, on, label, sub) => `
+    <label class="rem-toggle">
+      <input type="checkbox" id="${id}" ${on ? "checked" : ""} />
+      <span class="rem-switch"></span>
+      <span class="rem-text"><strong>${label}</strong><span class="muted small">${sub}</span></span>
+    </label>`;
+
+  return `
+    <div class="card">
+      ${toggle("remCheckin", r.checkin.on, "Monthly check-in nudge", "Shows a check-in card on Today when a new month is due")}
+      <div class="rem-timerow ${r.checkin.on ? "" : "hidden"}" id="remCheckinTimeRow">
+        <span class="muted small">Remind me at</span>
+        <input type="time" id="remCheckinTime" value="${r.checkin.time}" />
+      </div>
+      ${toggle("remWorkout", r.workout.on, "Daily workout reminder", "A heads-up if today's session isn't done yet")}
+      <div class="rem-timerow ${r.workout.on ? "" : "hidden"}" id="remTimeRow">
+        <span class="muted small">Remind me at</span>
+        <input type="time" id="remWorkoutTime" value="${r.workout.time}" />
+      </div>
+      <div class="rem-status">${status}</div>
+      <div class="muted small mt4">Reminders always appear inside the app. Phone alerts fire while FitYear is open — installed web apps can't reliably alert in the background, so the in-app nudges are your dependable reminder.</div>
+    </div>`;
+}
+
+function wireReminders() {
+  document.getElementById("remCheckin")?.addEventListener("change", (e) => {
+    state.reminders.checkin.on = e.target.checked;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+    renderProgress();
+  });
+  document.getElementById("remCheckinTime")?.addEventListener("change", (e) => {
+    state.reminders.checkin.time = e.target.value;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+  });
+  document.getElementById("remWorkout")?.addEventListener("change", (e) => {
+    state.reminders.workout.on = e.target.checked;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+    renderProgress();
+  });
+  document.getElementById("remWorkoutTime")?.addEventListener("change", (e) => {
+    state.reminders.workout.time = e.target.value;
+    save(STORE.reminders, state.reminders);
+    scheduleReminders();
+  });
+  document.getElementById("enableNotifBtn")?.addEventListener("click", requestNotif);
+}
+
 function renderProgress() {
   const p = state.profile;
   const targets = getTargets();
@@ -1005,6 +1592,8 @@ function renderProgress() {
 
   $view().innerHTML = `
     <div class="pagehead"><h1>📈 Progress</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+
+    ${checkinBanner()}
 
     <div class="levelcard card">
       <div class="lc-row">
@@ -1025,6 +1614,14 @@ function renderProgress() {
       <div class="stat"><div class="val">${pctLabel}%</div><div class="lbl">${x.done}/${totalDays} days done<div class="progressbar"><div style="width:${pct}%"></div></div></div></div>
     </div>
 
+    <h2 class="section-title">🧠 Smart coach</h2>
+    <div class="card coach-card">
+      <div class="coach-head"><h3>Your coach</h3><button class="btn tiny secondary" data-open-coach>💬 Ask coach</button></div>
+      ${coachInsights().length
+        ? coachInsights().map(insightCard).join("")
+        : `<div class="muted small">Log a few workouts, weigh-ins and a monthly check-in and your coach will start spotting patterns here. You can also tap <strong>Ask coach</strong> anytime.</div>`}
+    </div>
+
     <h2 class="section-title">🏅 Badges</h2>
     <div class="badges">
       ${badges.map((b) => `
@@ -1034,6 +1631,9 @@ function renderProgress() {
           <div class="bdesc">${b.desc}</div>
         </div>`).join("")}
     </div>
+
+    <h2 class="section-title">🗓️ Monthly checkpoints</h2>
+    ${checkpointsCard()}
 
     <h2 class="section-title">⚖️ Weekly check-in</h2>
     <div class="card">
@@ -1054,12 +1654,16 @@ function renderProgress() {
         : `<div class="muted">Log top sets on at least two workouts for an exercise (from Today or Plan) and its progression chart appears here.</div>`}
     </div>
 
+    <h2 class="section-title">🔔 Reminders</h2>
+    ${remindersCard()}
+
     <h2 class="section-title">⚙️ Data & profile</h2>
     <div class="card">
       <div class="topbar-actions">
         <button class="btn secondary" id="exportBtn">⬇️ Backup</button>
         <button class="btn secondary" id="importBtn">⬆️ Restore</button>
         <button class="btn secondary" id="resetBtn">Edit profile</button>
+        <button class="btn secondary" data-open-feedback>💬 Feedback</button>
         <input type="file" id="importFile" accept=".json,application/json" hidden />
       </div>
       <div class="muted small mt">Backups contain your profile, completed days, weigh-ins and logged lifts — use them to move to a new phone.</div>
@@ -1068,6 +1672,8 @@ function renderProgress() {
 
   document.querySelectorAll(".chip[data-ex]").forEach((c) =>
     c.addEventListener("click", () => { state.ui.chartEx = c.dataset.ex; renderProgress(); }));
+
+  wireReminders();
 
   document.getElementById("saveWeight").addEventListener("click", () => {
     const v = parseFloat(document.getElementById("weightInput").value);
@@ -1090,7 +1696,7 @@ function renderProgress() {
   document.getElementById("exportBtn").addEventListener("click", () => {
     const data = {
       app: "FitYear", version: 2, exportedAt: new Date().toISOString(),
-      profile: state.profile, progress: state.progress,
+      profile: state.profile, progress: state.progress, reminders: state.reminders,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -1114,6 +1720,7 @@ function renderProgress() {
         if (!confirm(`Restore backup for "${data.profile.name}" (saved ${when})? This replaces your current data.`)) return;
         state.profile = data.profile;
         state.progress = data.progress;
+        if (data.reminders) { state.reminders = normalizeReminders(data.reminders); save(STORE.reminders, state.reminders); }
         save(STORE.profile, state.profile);
         save(STORE.progress, state.progress);
         render();
@@ -1170,6 +1777,358 @@ function coachNotes() {
   return `
     <h3 class="mt">🧠 Coach notes</h3>
     ${log.map((n) => `<div class="coach-note ${n.adjusted ? "adjusted" : ""}"><strong>Week ${n.week}:</strong> ${n.text}</div>`).join("")}`;
+}
+
+/* ================= Smart coach: on-device agents =================
+   Each agent reads your saved data and returns at most one insight
+   { icon, tone: win|tip|warn, title, text }. They run entirely in the
+   browser — no network, no account — and feed both the Today coach card
+   and the Progress "Smart coach" section. Later, the conversational Coach
+   uses the same insights as grounding context. */
+
+function coachInsights() {
+  const out = [];
+  for (const agent of [progressionAgent, plateauAgent, recoveryAgent, adherenceAgent]) {
+    try { const ins = agent(); if (ins) out.push(ins); } catch { /* an agent never breaks the app */ }
+  }
+  return out;
+}
+
+// Progression: which logged lifts have topped their rep range twice → add load.
+function progressionAgent() {
+  const lifts = state.progress.lifts || {};
+  const ph = phaseForWeek(todayInfo().week);
+  const topReps = parseInt(String(ph.reps).split(/[–-]/).pop(), 10) || 12;
+  const ready = [];
+  for (const [name, logs] of Object.entries(lifts)) {
+    if (!logs || logs.length < 2) continue;
+    const last = logs[logs.length - 1], prev = logs[logs.length - 2];
+    if (last.reps >= topReps && prev.reps >= topReps) {
+      ready.push(last.kg > 0
+        ? `${esc(name)} → try ${(last.kg + 2.5).toFixed(1).replace(/\.0$/, "")} kg`
+        : `${esc(name)} → add reps or a harder variation`);
+    }
+  }
+  if (!ready.length) return null;
+  return { icon: "📈", tone: "win", title: "Ready to level up",
+    text: `You've maxed the rep range on ${ready.length} lift${ready.length > 1 ? "s" : ""}: ${ready.slice(0, 3).join(" · ")}.` };
+}
+
+// Plateau: weight flat across the last 3 weigh-ins relative to the goal.
+function plateauAgent() {
+  const g = state.profile.goal;
+  if (g === "maintain") return null;
+  const e = Object.entries(state.progress.weights || {}).map(([w, kg]) => [+w, +kg]).sort((a, b) => a[0] - b[0]);
+  if (e.length < 3) return null;
+  const r = e.slice(-3);
+  const net = +(r[r.length - 1][1] - r[0][1]).toFixed(1);
+  const weeks = r[r.length - 1][0] - r[0][0] || 1;
+  const rate = net / weeks;
+  const stalled = g === "lose" ? rate > -0.1 : rate < 0.05;
+  if (!stalled) return null;
+  return { icon: "⏸️", tone: "warn", title: "Progress has flattened",
+    text: `Weight's held about steady over your last 3 check-ins (${net > 0 ? "+" : ""}${net} kg). ${g === "lose" ? "Tighten portions or add a walk / cardio session" : "Add a snack or bump portions"} — your calorie coach is already nudging the target.` };
+}
+
+// Recovery: latest monthly check-in flagged low energy or sleep.
+function recoveryAgent() {
+  const c = allCheckins();
+  const last = c[c.length - 1];
+  if (!last) return null;
+  const lowE = last.energy && last.energy <= 2, lowS = last.sleep && last.sleep <= 2;
+  if (!lowE && !lowS) return null;
+  const what = lowE && lowS ? "energy and sleep" : lowE ? "energy" : "sleep";
+  return { icon: "😴", tone: "tip", title: "Recovery first",
+    text: `Your last check-in flagged low ${what}. Protect your sleep, hydrate, and keep a session or two easy this week — recovery is where the gains land.` };
+}
+
+// Adherence: sessions completed in the last 14 days vs the plan.
+function adherenceAgent() {
+  const t = todayInfo();
+  if (t.dayNum < 7) return null;
+  const span = Math.min(14, t.dayNum);
+  let done = 0;
+  for (let i = 0; i < span; i++) {
+    const dn = t.dayNum - 1 - i;
+    if (dn < 0) break;
+    const w = Math.floor(dn / 7) + 1, d = dn % 7;
+    if (state.progress.completed[`w${w}d${d}`]) done++;
+  }
+  const target = Math.round((state.profile.days / 7) * span);
+  if (target > 0 && done >= target) {
+    return { icon: "🔥", tone: "win", title: "Locked in",
+      text: `${done} sessions in the last 2 weeks — right on plan. Keep the streak alive.` };
+  }
+  if (done < Math.max(1, target - 2)) {
+    return { icon: "👋", tone: "tip", title: "Let's get back on track",
+      text: `Only ${done} session${done === 1 ? "" : "s"} logged in the last 2 weeks. Just do today's — momentum beats perfection.` };
+  }
+  return null;
+}
+
+function insightCard(ins) {
+  return `<div class="insight tone-${ins.tone}"><span class="ins-icon">${ins.icon}</span>
+    <div><strong>${ins.title}</strong><div class="small muted">${ins.text}</div></div></div>`;
+}
+
+// Compact card for Today (top few insights); full list lives on Progress.
+function coachCard(limit) {
+  const ins = coachInsights();
+  if (!ins.length) return "";
+  const list = limit ? ins.slice(0, limit) : ins;
+  return `
+    <div class="card coach-card">
+      <div class="coach-head"><h3>🧠 Your coach</h3><button class="btn tiny secondary" data-open-coach>💬 Ask</button></div>
+      ${list.map(insightCard).join("")}
+    </div>`;
+}
+
+/* ---- Conversational Coach (Claude via your serverless proxy) ---- */
+
+// Compact, grounding snapshot sent to the proxy so Claude reasons over real data.
+function buildCoachContext() {
+  const p = state.profile, t = todayInfo(), ph = phaseForWeek(t.week), tg = getTargets();
+  const weights = Object.entries(state.progress.weights || {}).map(([w, kg]) => [+w, +kg]).sort((a, b) => a[0] - b[0]);
+  const lastCheck = allCheckins()[allCheckins().length - 1] || null;
+  const x = xpStats(), st = streaks();
+  return {
+    profile: {
+      name: p.name, age: p.age, sex: p.sex, heightCm: p.height, weightKg: p.weight,
+      goal: p.goal, experience: p.experience, daysPerWeek: p.days, equipment: p.equipment, diet: p.diet,
+    },
+    today: { day: t.dayNum, week: t.week, phase: ph && ph.name },
+    targets: { calories: tg.calories, proteinG: tg.protein, calorieAdjust: state.progress.calorieDelta || 0 },
+    weightTrend: weights.length ? { start: weights[0][1], latest: weights[weights.length - 1][1], points: weights.slice(-6) } : null,
+    lastMonthlyCheckin: lastCheck && {
+      month: lastCheck.month, weight: lastCheck.weight, energy: lastCheck.energy, sleep: lastCheck.sleep,
+      motivation: lastCheck.motivation, win: lastCheck.win, focus: lastCheck.focus,
+    },
+    gamification: { level: x.level + 1, levelName: x.levelName, currentStreak: st.current, daysDone: x.done },
+    coachInsights: coachInsights().map((i) => `${i.title}: ${i.text}`),
+  };
+}
+
+function openCoachChat() {
+  document.getElementById("coachModal")?.remove();
+  const modal = document.createElement("div");
+  modal.className = "tmodal";
+  modal.id = "coachModal";
+  modal.innerHTML = `
+    <div class="tcard coach-chat">
+      <button class="tclose" aria-label="Close">✕</button>
+      <h2>💬 Coach</h2>
+      <div id="coachBody"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) closeCoach(); });
+  renderCoachBody();
+}
+function closeCoach() { document.getElementById("coachModal")?.remove(); }
+
+// In-app feedback → posts to the same coach Worker (feedback branch).
+function openFeedback() {
+  document.getElementById("fbModal")?.remove();
+  const modal = document.createElement("div");
+  modal.className = "tmodal"; modal.id = "fbModal";
+  const configured = !!coachEndpoint();
+  modal.innerHTML = `
+    <div class="tcard fb-card">
+      <button class="tclose" aria-label="Close">✕</button>
+      <h2>💬 Send feedback</h2>
+      ${configured ? `
+        <p class="muted small">Bugs, ideas, what you love — it goes straight to the FitYear team. Your goal and app version are attached to help us; no personal data or photos.</p>
+        <label class="field"><span>Your feedback</span><textarea id="fbText" rows="5" placeholder="What worked, what didn't, what you'd want next…"></textarea></label>
+        <button class="btn gold" id="fbSend">Send feedback</button>`
+        : `<p class="muted small">Feedback isn't wired up in this build yet. Once a coach endpoint is set (Progress → Coach → settings), feedback sends from here.</p>`}
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".tclose")) modal.remove(); });
+
+  const send = modal.querySelector("#fbSend");
+  send?.addEventListener("click", async () => {
+    const t = (modal.querySelector("#fbText").value || "").trim();
+    if (!t) { modal.querySelector("#fbText").focus(); return; }
+    send.disabled = true; send.textContent = "Sending…";
+    try {
+      const res = await fetch(coachEndpoint(), {
+        method: "POST", headers: coachHeaders(),
+        body: JSON.stringify({ feedback: t, meta: {
+          appVersion: APP_VERSION, goal: state.profile && state.profile.goal,
+          experience: state.profile && state.profile.experience, level: xpStats().level + 1,
+        } }),
+      });
+      if (!res.ok) throw new Error();
+      modal.querySelector(".fb-card").innerHTML = `
+        <button class="tclose" aria-label="Close">✕</button>
+        <div class="fb-thanks"><div class="fb-emoji">🙏</div><h2>Thank you!</h2>
+          <p class="muted small">Your feedback helps shape FitYear.</p></div>`;
+    } catch {
+      send.disabled = false; send.textContent = "Send feedback";
+      alert("Couldn't send — check your connection and try again.");
+    }
+  });
+}
+
+function renderCoachBody() {
+  const body = document.getElementById("coachBody");
+  if (!body) return;
+  if (!coachEndpoint()) { renderCoachSetup(body); return; }
+
+  body.innerHTML = `
+    <div class="chat-log" id="chatLog">
+      ${coachChat.length ? coachChat.map((m, i) => chatBubble(m, i)).join("")
+        : `<div class="chat-empty">Ask me anything about your training, nutrition or recovery — I can see your plan and progress. Try:
+             <div class="chat-suggests">
+               <button class="chip" data-ask="Why am I not losing weight?">Why am I not losing weight?</button>
+               <button class="chip" data-ask="What should I focus on this week?">Focus this week?</button>
+               <button class="chip" data-ask="How do I break my plateau?">Break my plateau</button>
+             </div></div>`}
+    </div>
+    <form class="chat-input" id="chatForm">
+      <input id="chatText" type="text" autocomplete="off" placeholder="Ask your coach…" />
+      <button class="btn tiny" type="submit" id="chatSend">Send</button>
+    </form>
+    <div class="chat-foot muted small">Powered by Claude via your own proxy · <button class="linkbtn" id="coachSettingsBtn">settings</button>${coachChat.length ? ` · <button class="linkbtn" id="coachClearBtn">clear chat</button>` : ""}</div>`;
+
+  const log = document.getElementById("chatLog");
+  log.scrollTop = log.scrollHeight;
+  document.getElementById("chatForm").addEventListener("submit", (e) => { e.preventDefault(); sendCoachMessage(document.getElementById("chatText").value); });
+  body.querySelectorAll("[data-ask]").forEach((b) => b.addEventListener("click", () => sendCoachMessage(b.dataset.ask)));
+  body.querySelectorAll("[data-ci]").forEach((b) => b.addEventListener("click", () => applyCoachAction(+b.dataset.ci, +b.dataset.ai)));
+  document.getElementById("coachSettingsBtn").addEventListener("click", () => renderCoachSetup(body));
+  document.getElementById("coachClearBtn")?.addEventListener("click", () => {
+    coachChat = []; saveCoachChat(); renderCoachBody();
+  });
+}
+
+function chatBubble(m, ci) {
+  if (m.role === "user") return `<div class="bubble me">${esc(m.content)}</div>`;
+  const actions = (m.actions || []).map((a, ai) => a.applied
+    ? `<span class="act-chip done">✓ ${esc(a.label || a.type)}</span>`
+    : `<button class="act-chip" data-ci="${ci}" data-ai="${ai}">${esc(a.label || a.type)}</button>`).join("");
+  return `<div class="bubble coach ${m.pending ? "pending" : ""}">${formatCoachReply(m.content)}${actions ? `<div class="act-row">${actions}</div>` : ""}</div>`;
+}
+// Light formatting: preserve line breaks, escape everything else.
+function formatCoachReply(t) { return esc(t).replace(/\n/g, "<br>"); }
+
+async function sendCoachMessage(text) {
+  text = (text || "").trim();
+  if (!text || !coachEndpoint()) return;
+  coachChat.push({ role: "user", content: text });
+  coachChat.push({ role: "assistant", content: "…", pending: true });
+  renderCoachBody();
+  const input = document.getElementById("chatText"); if (input) input.value = "";
+
+  try {
+    const res = await fetch(coachEndpoint(), {
+      method: "POST",
+      headers: coachHeaders(),
+      body: JSON.stringify({
+        messages: coachChat.filter((m) => !m.pending).map((m) => ({ role: m.role, content: m.content })),
+        context: buildCoachContext(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    coachChat = coachChat.filter((m) => !m.pending);
+    if (!res.ok || data.error) coachChat.push({ role: "assistant", content: `⚠️ ${data.error || "Coach unavailable (" + res.status + ")."}` });
+    else coachChat.push({ role: "assistant", content: data.reply || "(No reply.)", actions: sanitizeActions(data.actions) });
+  } catch (e) {
+    coachChat = coachChat.filter((m) => !m.pending);
+    coachChat.push({ role: "assistant", content: "⚠️ Couldn't reach your coach endpoint. Check the URL in settings and that it's online." });
+  }
+  saveCoachChat();
+  renderCoachBody();
+}
+
+// Only keep actions of known types — never trust the endpoint to drive arbitrary changes.
+const COACH_ACTION_TYPES = ["adjust_calories", "set_workout_reminder", "set_checkin_reminder", "start_checkin", "log_weight", "mark_workout_done"];
+function sanitizeActions(actions) {
+  if (!Array.isArray(actions)) return [];
+  return actions.filter((a) => a && COACH_ACTION_TYPES.includes(a.type)).slice(0, 4);
+}
+
+// Apply a coach-proposed change to local state, only when the user taps it.
+function applyCoachAction(ci, ai) {
+  const a = coachChat[ci] && coachChat[ci].actions && coachChat[ci].actions[ai];
+  if (!a || a.applied) return;
+  let ok = true, note = "";
+  switch (a.type) {
+    case "adjust_calories": {
+      const prev = state.progress.calorieDelta || 0;
+      const next = Math.max(-300, Math.min(300, prev + (Number(a.deltaKcal) || 0)));
+      state.progress.calorieDelta = next;
+      save(STORE.progress, state.progress);
+      note = `Calorie target ${next >= 0 ? "+" : ""}${next} kcal/day`;
+      break;
+    }
+    case "set_workout_reminder": {
+      if (typeof a.on === "boolean") state.reminders.workout.on = a.on;
+      if (/^\d{1,2}:\d{2}$/.test(a.time || "")) state.reminders.workout.time = a.time;
+      save(STORE.reminders, state.reminders);
+      scheduleReminders();
+      note = `Workout reminder ${state.reminders.workout.on ? "on · " + state.reminders.workout.time : "off"}`;
+      break;
+    }
+    case "set_checkin_reminder": {
+      if (typeof a.on === "boolean") state.reminders.checkin.on = a.on;
+      if (/^\d{1,2}:\d{2}$/.test(a.time || "")) state.reminders.checkin.time = a.time;
+      save(STORE.reminders, state.reminders);
+      scheduleReminders();
+      note = `Check-in reminder ${state.reminders.checkin.on ? "on · " + state.reminders.checkin.time : "off"}`;
+      break;
+    }
+    case "log_weight": {
+      const kg = Number(a.kg);
+      if (!kg || kg < 30 || kg > 250) { ok = false; break; }
+      state.progress.weights[todayInfo().week] = kg;
+      save(STORE.progress, state.progress);
+      runAdaptation();
+      note = `Logged ${kg} kg for week ${todayInfo().week}`;
+      break;
+    }
+    case "mark_workout_done": {
+      const t = todayInfo();
+      setDayDone(`w${t.week}d${t.dayIdx}`, true);
+      note = "Marked today complete";
+      break;
+    }
+    case "start_checkin": {
+      a.applied = true; saveCoachChat();
+      closeCoach();
+      openMonthlyCheckin(currentMonthNo());
+      return;
+    }
+    default: ok = false;
+  }
+  if (ok) { a.applied = true; saveCoachChat(); toast(`✓ ${note || "Applied"}`); }
+  renderCoachBody();
+}
+
+function renderCoachSetup(body) {
+  body.innerHTML = `
+    <div class="coach-setup">
+      <p class="muted small">The chat coach is powered by Claude. Because an API key can't live safely in the app, you run a tiny free proxy that holds the key. One-time setup (~5 min) — see <strong>coach-worker/README.md</strong> in the project.</p>
+      <ol class="coach-steps small">
+        <li>Deploy the Cloudflare Worker in <code>coach-worker/</code> and set your <code>ANTHROPIC_API_KEY</code>.</li>
+        <li>Copy the Worker URL it prints.</li>
+        <li>Paste it below.</li>
+      </ol>
+      <label class="field"><span>Coach proxy URL</span>
+        <input id="coachEndpoint" type="url" placeholder="https://fityear-coach.you.workers.dev" value="${esc(state.coach.endpoint || "")}" /></label>
+      <button class="btn gold" id="coachSave">Save & connect</button>
+      ${state.coach.endpoint ? `<button class="btn ghost" id="coachClear">Disconnect</button>` : ""}
+      <div class="muted small mt4">Your profile & progress summary (no photos) are sent to your proxy to answer. Until connected, the on-device Smart Coach still works offline.</div>
+    </div>`;
+  document.getElementById("coachSave").addEventListener("click", () => {
+    const url = (document.getElementById("coachEndpoint").value || "").trim();
+    if (url && !/^https?:\/\//.test(url)) { alert("Enter a full URL starting with https://"); return; }
+    state.coach.endpoint = url;
+    save(STORE.coach, state.coach);
+    renderCoachBody();
+  });
+  document.getElementById("coachClear")?.addEventListener("click", () => {
+    state.coach.endpoint = ""; save(STORE.coach, state.coach); coachChat = []; renderCoachBody();
+  });
 }
 
 /* ---- Charts (inline SVG) ---- */
@@ -1342,7 +2301,11 @@ const HELP_SECTIONS = [
   ["🛒", "Grocery", "A checkable shopping list covering every meal of the selected week — printable too."],
   ["💊", "Supplements", "Your personalized stack with doses and best timing lives in Plan → Supplements; tick them off daily on Today."],
   ["⚖️", "Weekly check-in", "Log your weight once a week in Progress. The coach compares your trend to the healthy rate and auto-adjusts your calories."],
-  ["🏅", "XP, streaks & badges", "Completed days, logged sets and check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 8 badges."],
+  ["🧠", "Smart coach", "On-device agents read your logged sets, weight trend, check-ins and adherence to prescribe your next move — when to add weight, when a plateau needs a change, when to prioritise recovery. Insights appear on Today and in Progress → Smart coach."],
+  ["💬", "Ask coach (AI chat)", "Tap 'Ask coach' to chat with a Claude-powered coach that reasons over your real plan and progress. It's optional and needs a one-time free proxy setup (see coach-worker/README) so your API key stays private — until then, the on-device Smart coach still works."],
+  ["📸", "Monthly check-in", "Once a month, snapshot your weight, tape measures, a photo and how you feel. You get a progress report comparing it to last time, +50 XP and badges. Find it on Today's nudge or Progress → Monthly checkpoints."],
+  ["🔔", "Reminders", "In Progress → Reminders, switch on the monthly check-in nudge and a daily workout reminder (pick a time). In-app nudges always work; enable notifications for phone alerts while the app is open."],
+  ["🏅", "XP, streaks & badges", "Completed days, logged sets, weigh-ins and monthly check-ins earn XP. Keep the daily 🔥 streak alive and unlock all 11 badges."],
   ["💾", "Backup & privacy", "Everything stays on your device. Use Backup/Restore in Progress to move your data to a new phone."],
 ];
 
@@ -1379,3 +2342,8 @@ function esc(s) {
 render();
 // Show the guided tour once — for brand-new plans and for existing users after this update.
 if (state.profile && !state.ui.editingProfile && !state.progress.tourDone) setTimeout(startTour, 400);
+
+// Arm local reminders for this session, and re-arm when the app comes back to
+// the foreground (a new day may have started, or a scheduled time passed).
+scheduleReminders();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleReminders(); });
