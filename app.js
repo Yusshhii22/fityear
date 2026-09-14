@@ -641,6 +641,19 @@ function applyCustom(weekPlan, week) {
 
 /* ================= Today tab ================= */
 
+// How many top sets were logged today, out of how many working exercises.
+function todaySetProgress(day, week) {
+  if (!day.isTraining) return null;
+  const lifts = state.progress.lifts || {};
+  const working = day.workout.exercises.filter((ex) => ex.sets !== "—");
+  const target = working.reduce((sum, ex) => sum + (parseInt(String(ex.sets), 10) || 1), 0);
+  const logged = working.reduce((sum, ex) => {
+    const arr = lifts[ex.name] || [];
+    return sum + arr.filter((l) => l.week === week).length;
+  }, 0);
+  return { logged, target, working: working.length };
+}
+
 function renderToday() {
   const p = state.profile;
   const t = todayInfo();
@@ -652,36 +665,63 @@ function renderToday() {
   const done = !!state.progress.completed[key];
   const x = xpStats();
   const st = streaks();
+  const prog = todaySetProgress(day, t.week);
+  const trainer = p.role === "trainer";
+
+  // Streak read as five flames — lit up to the current run, capped at 5.
+  const flames = Array.from({ length: 5 }, (_, i) =>
+    `<span class="fy-flame ${i < Math.min(st.current, 5) ? "lit" : ""}">🔥</span>`).join("");
 
   $view().innerHTML = `
     <div class="today-hero">
       <div class="th-top">
         <div>
+          <div class="fy-eyebrow">${day.dayName} · Week ${t.week} · ${ph.name}</div>
           <div class="th-day">Day ${t.dayNum} <span class="of">/ 365</span></div>
-          <div class="muted">${p.role === "trainer" ? `👤 Client: ${esc(p.name)}` : `Hi ${esc(p.name)}`} · Week ${t.week} · ${ph.name} · ${EXPERIENCE[p.experience].label}</div>
+          <div class="fy-who muted">${trainer
+            ? `👤 Client: <strong>${esc(p.name)}</strong> · ${EXPERIENCE[p.experience].label}`
+            : `Hi ${esc(p.name)} · ${EXPERIENCE[p.experience].label}`}</div>
         </div>
         <div class="th-right">
-          <div class="th-gam">
-            <div class="flame ${st.current > 0 ? "lit" : ""}">🔥 ${st.current}</div>
-            <div class="lvl">Lv ${x.level + 1} · ${x.levelName}</div>
-            <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
+          <div class="fy-streak">
+            <div class="fy-flames">${flames}</div>
+            <div class="fy-streak-lbl">${st.current}-day streak</div>
           </div>
           <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
         </div>
       </div>
+
+      <div class="fy-xp">
+        <div class="fy-xp-top">
+          <span class="lvl">Lv ${x.level + 1} · ${x.levelName}</span>
+          <span class="fy-xp-num">${x.xp % XP_PER_LEVEL} / ${XP_PER_LEVEL} XP</span>
+        </div>
+        <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
+      </div>
+
       <div class="phase-chip">${ph.intensity} — ${ph.focus}
         <div class="small mt4">🎯 ${EXPERIENCE[p.experience].note}</div>
-        ${p.role === "trainer" ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
+        ${trainer ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
       </div>
     </div>
 
     <div class="card day-focus">
       <div class="df-head">
         <h2>${day.isTraining ? `🏋️ ${day.workout.label}` : "🌿 Rest & Recovery"}</h2>
-        ${done ? `<span class="day-tag tag-done">✓ Done</span>` : ""}
+        ${done ? `<span class="day-tag tag-done">✓ Done</span>`
+          : prog ? `<span class="fy-meter">${prog.logged}<span class="fy-meter-of">/${prog.target} sets</span></span>` : ""}
       </div>
+      ${prog && !done ? `
+        <div class="fy-bar"><div style="width:${Math.min(100, (prog.logged / prog.target) * 100)}%"></div></div>` : ""}
       ${day.isTraining ? workoutTable(day.workout, t.week, ph) : `<div class="restnote">${day.restNote}</div>`}
-      <button class="btn ${done ? "ghost" : "gold"}" id="doneBtn">${done ? "Undo — not done yet" : `Mark Day ${t.dayNum} complete (+25 XP)`}</button>
+      <button class="btn ${done ? "ghost" : "gold"}" id="doneBtn">${done
+        ? "Undo — not done yet"
+        : `Mark Day ${t.dayNum} complete (+25 XP)`}</button>
+      <div class="fy-hint muted small">${done
+        ? `Streak is now ${st.current} ${st.current === 1 ? "day" : "days"}. Rest well.`
+        : prog && prog.logged >= prog.target
+          ? "Every set is in — claim the day."
+          : "Log your top sets as you go; they set next week's targets."}</div>
     </div>
 
     <div class="card">${mealsBlock(day.meals, targets.calories)}</div>
