@@ -258,6 +258,7 @@ function renderOnboarding() {
     const t = calcTargets(draft);
     const split = [...new Set(SPLITS[draft.days].map((k) => DAY_TEMPLATES[k].label))];
     body = `
+      <div class="fy-eyebrow">${draft.days}-day split · 52 weeks</div>
       <h1>${tr ? `${esc(d.name)}'s year is ready 🎉` : `Your year is ready, ${esc(d.name)} 🎉`}</h1>
       <p class="sub muted">${tr ? "Here's the program built from their answers:" : "Here's what we'll build from your answers:"}</p>
       <div class="stats">
@@ -272,7 +273,7 @@ function renderOnboarding() {
         <h3 class="mt">💊 Your supplement stack</h3>
         <div class="sumchips mt4">${supplementStack(draft).map((s) => `<span class="sumchip">${s.icon} ${s.name}</span>`).join("")}</div>
         <h3 class="mt">📊 The journey</h3>
-        <div class="muted small mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
+        <div class="phase-chip mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
         ${d.role === "trainer" ? `<div class="tnote mt">🎓 Trainer mode: phase banners include the programming rationale, you can reorder days & exercises and edit sets/reps/rest in Plan → Week → ✏️ Customize, and week sheets print clean for clients.</div>` : ""}
       </div>`;
     footer = `<button class="btn gold" id="wfinish">${editing ? "Save & regenerate my plan →" : "Generate my 1-year plan →"}</button>`;
@@ -950,6 +951,7 @@ function suppGuide() {
   const dietLabel = { veg: "vegetarian", nonveg: "non-vegetarian", vegan: "vegan" }[p.diet];
   return `
     <div class="card">
+      <div class="fy-eyebrow">Daily stack · ${dietLabel}</div>
       <h2>💊 Your supplement stack</h2>
       <div class="muted small mt4">Personalized for <strong>${goalLabel(p.goal).replace(/^\S+ /, "").toLowerCase()}</strong> on a <strong>${dietLabel}</strong> diet.
       Supplements are the last 5% — they top up good food, training and sleep, never replace them. Tick them off each day on the Today tab.</div>
@@ -1009,6 +1011,7 @@ function groceryHtml(week, targets) {
   const groups = groceryForWeek(state.profile, targets, week);
   const ticks = (state.progress.grocery || {})[`w${week}`] || {};
   return `
+    <div class="fy-eyebrow">Shopping list · Week ${week}</div>
     <div class="muted small">Everything you need to cook this week's meals. Quantities are rounded up.</div>
     ${Object.entries(GROCERY_CATS).filter(([cat]) => groups[cat]).map(([cat, label]) => `
       <h3 class="gcat">${label}</h3>
