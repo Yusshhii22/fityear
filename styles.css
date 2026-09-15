@@ -172,7 +172,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .stat .lbl { font-size: 0.75rem; color: var(--muted); }
 .stat .adj { font-size: 0.8125rem; font-weight: 700; color: var(--amber); margin-left: 5px; vertical-align: super; }
 .progressbar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 6px; }
-.progressbar > div { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.3s; }
+/* Indigo gradient — same "progress toward a target" language as the Today set-progress bar. */
+.progressbar > div { height: 100%; background: linear-gradient(90deg, #7c8cff, #5a5cf0); border-radius: 4px; transition: width 0.3s; }
 
 /* ---- Badges ---- */
 .badges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -188,9 +189,10 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .bdesc { font-size: 0.6875rem; color: var(--muted); }
 
 /* ---- Phase banner & week nav ---- */
+/* Same indigo structural band as the Today phase chip. */
 .phase-banner {
-  background: var(--accent-soft); border: 1px solid rgba(124, 140, 255, 0.35);
-  border-radius: 14px; padding: 14px 16px; margin-bottom: 16px;
+  background: rgba(124, 140, 255, 0.09); border: 1px solid rgba(124, 140, 255, 0.26);
+  border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; line-height: 1.45;
 }
 .phase-banner .name { font-weight: 800; color: var(--accent); }
 
@@ -673,3 +675,15 @@ input.exedit { width: 58px; padding: 4px 6px; font-size: max(16px, 0.75rem); }
   align-items: flex-start;
   gap: 10px;
 }
+
+/* ---- Cross-app consistency: reuse the Today idioms elsewhere ---- */
+
+/* Eyebrow sits above the page-head title on Plan & Progress, like Today. */
+.pagehead .fy-eyebrow { margin-bottom: 2px; }
+.pagehead h1 { line-height: 1.1; }
+
+/* Five-flame streak reused in the Progress level card: push it to the
+   right edge of the row (the old single flame used margin-left:auto) and
+   size the flames up a touch to balance the level badge. */
+.levelcard .fy-streak { margin-left: auto; }
+.levelcard .fy-flames { font-size: 15px; }

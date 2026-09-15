@@ -833,7 +833,13 @@ function renderPlan() {
   };
 
   $view().innerHTML = `
-    <div class="pagehead"><h1>📅 Plan</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+    <div class="pagehead">
+      <div>
+        <div class="fy-eyebrow">Week ${week} · ${ph.name}</div>
+        <h1>📅 Plan</h1>
+      </div>
+      <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
+    </div>
     <div class="subnav">
       ${[["week", "🏋️ Week"], ["grocery", "🛒 Grocery"], ["supps", "💊 Supplements"], ["year", "🗺️ Year"]]
         .map(([id, label]) => `<button class="${page === id ? "active" : ""}" data-page="${id}">${label}</button>`).join("")}
@@ -1043,8 +1049,18 @@ function renderProgress() {
   const liftExercises = Object.keys(state.progress.lifts || {}).filter((k) => state.progress.lifts[k].length >= 2);
   if (!state.ui.chartEx || !liftExercises.includes(state.ui.chartEx)) state.ui.chartEx = liftExercises[0] || null;
 
+  // Streak read as five flames — mirrors the Today screen, capped at 5.
+  const flames = Array.from({ length: 5 }, (_, i) =>
+    `<span class="fy-flame ${i < Math.min(st.current, 5) ? "lit" : ""}">🔥</span>`).join("");
+
   $view().innerHTML = `
-    <div class="pagehead"><h1>📈 Progress</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+    <div class="pagehead">
+      <div>
+        <div class="fy-eyebrow">Level ${x.level + 1} · ${x.levelName}</div>
+        <h1>📈 Progress</h1>
+      </div>
+      <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
+    </div>
 
     <div class="levelcard card">
       <div class="lc-row">
@@ -1053,7 +1069,10 @@ function renderProgress() {
           <div class="lc-name">${x.levelName}</div>
           <div class="muted small">${x.xp} XP · ${XP_PER_LEVEL - (x.xp % XP_PER_LEVEL)} XP to next level</div>
         </div>
-        <div class="flame lit big">🔥 ${st.current}</div>
+        <div class="fy-streak">
+          <div class="fy-flames">${flames}</div>
+          <div class="fy-streak-lbl">${st.current}-day streak</div>
+        </div>
       </div>
       <div class="xpbar big"><div style="width:${x.toNext * 100}%"></div></div>
     </div>
