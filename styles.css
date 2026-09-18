@@ -146,9 +146,9 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .xpbar > div { height: 100%; background: linear-gradient(90deg, #ffd36b, #f0a020); border-radius: 3px; transition: width 0.4s; }
 .xpbar.big { height: 10px; border-radius: 5px; margin-top: 12px; }
 .phase-chip {
-  margin-top: 12px; font-size: 0.8125rem; color: var(--text);
-  background: var(--accent-soft); border: 1px solid rgba(124, 140, 255, 0.3);
-  border-radius: 12px; padding: 10px 14px;
+  margin-top: 12px; font-size: 0.8125rem; color: var(--text); line-height: 1.45;
+  background: rgba(124, 140, 255, 0.09); border: 1px solid rgba(124, 140, 255, 0.26);
+  border-radius: 14px; padding: 12px 14px;
 }
 
 .day-focus .df-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; }
@@ -172,7 +172,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .stat .lbl { font-size: 0.75rem; color: var(--muted); }
 .stat .adj { font-size: 0.8125rem; font-weight: 700; color: var(--amber); margin-left: 5px; vertical-align: super; }
 .progressbar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 6px; }
-.progressbar > div { height: 100%; background: var(--green); border-radius: 4px; transition: width 0.3s; }
+/* Indigo gradient — same "progress toward a target" language as the Today set-progress bar. */
+.progressbar > div { height: 100%; background: linear-gradient(90deg, #7c8cff, #5a5cf0); border-radius: 4px; transition: width 0.3s; }
 
 /* ---- Badges ---- */
 .badges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -188,9 +189,10 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .bdesc { font-size: 0.6875rem; color: var(--muted); }
 
 /* ---- Phase banner & week nav ---- */
+/* Same indigo structural band as the Today phase chip. */
 .phase-banner {
-  background: var(--accent-soft); border: 1px solid rgba(124, 140, 255, 0.35);
-  border-radius: 14px; padding: 14px 16px; margin-bottom: 16px;
+  background: rgba(124, 140, 255, 0.09); border: 1px solid rgba(124, 140, 255, 0.26);
+  border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; line-height: 1.45;
 }
 .phase-banner .name { font-weight: 800; color: var(--accent); }
 
@@ -525,3 +527,163 @@ input.exedit { width: 58px; padding: 4px 6px; font-size: max(16px, 0.75rem); }
   .pmeals { font-size: 11px; margin-top: 2px; }
   .pfoot { margin-top: 12px; font-size: 10px; color: #555; border-top: 1px solid #999; padding-top: 4px; }
 }
+
+/* ===== FitYear — Today refresh =====
+   Append to the end of styles.css. Only `fy-` classes are new; the three
+   overrides at the bottom retune existing Today classes and can be deleted
+   if you'd rather keep the current look exactly. */
+
+.fy-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7b88a8;
+  margin-bottom: 6px;
+}
+
+.fy-who {
+  font-size: 12.5px;
+  margin-top: 6px;
+}
+
+/* ---- streak ---- */
+
+.fy-streak { text-align: right; }
+
+.fy-flames {
+  display: flex;
+  gap: 3px;
+  justify-content: flex-end;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.fy-flame {
+  opacity: 0.3;
+  filter: grayscale(1);
+}
+
+.fy-flame.lit {
+  opacity: 1;
+  filter: drop-shadow(0 0 7px rgba(245, 158, 66, 0.55));
+}
+
+.fy-streak-lbl {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--gold, #f5b942);
+  margin-top: 5px;
+  white-space: nowrap;
+}
+
+/* ---- XP block ---- */
+
+.fy-xp {
+  background: #101623;
+  border: 1px solid #1e263c;
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 14px;
+}
+
+.fy-xp-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.fy-xp-num {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b97b5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- today's set progress ---- */
+
+.fy-meter {
+  font-size: 15px;
+  font-weight: 800;
+  color: #eef2fb;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.fy-meter-of {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6f7b98;
+  margin-left: 2px;
+}
+
+.fy-bar {
+  height: 6px;
+  background: #1e263c;
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 2px 0 16px;
+}
+
+.fy-bar > div {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #7c8cff, #5a5cf0);
+  transition: width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fy-hint {
+  text-align: center;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+/* ---- retuned existing Today classes ---- */
+
+/* Bigger, tighter day number so it reads as the page's anchor. */
+.today-hero .th-day {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.today-hero .th-day .of {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: #6f7b98;
+}
+
+/* Phase chip reads as structure (indigo), not decoration. */
+.today-hero .phase-chip {
+  background: rgba(124, 140, 255, 0.09);
+  border: 1px solid rgba(124, 140, 255, 0.26);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-top: 14px;
+  line-height: 1.45;
+}
+
+.th-top { align-items: flex-start; }
+
+.th-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* ---- Cross-app consistency: reuse the Today idioms elsewhere ---- */
+
+/* Eyebrow sits above the page-head title on Plan & Progress, like Today. */
+.pagehead .fy-eyebrow { margin-bottom: 2px; }
+.pagehead h1 { line-height: 1.1; }
+
+/* Five-flame streak reused in the Progress level card: push it to the
+   right edge of the row (the old single flame used margin-left:auto) and
+   size the flames up a touch to balance the level badge. */
+.levelcard .fy-streak { margin-left: auto; }
+.levelcard .fy-flames { font-size: 15px; }

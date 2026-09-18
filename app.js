@@ -258,6 +258,7 @@ function renderOnboarding() {
     const t = calcTargets(draft);
     const split = [...new Set(SPLITS[draft.days].map((k) => DAY_TEMPLATES[k].label))];
     body = `
+      <div class="fy-eyebrow">${draft.days}-day split · 52 weeks</div>
       <h1>${tr ? `${esc(d.name)}'s year is ready 🎉` : `Your year is ready, ${esc(d.name)} 🎉`}</h1>
       <p class="sub muted">${tr ? "Here's the program built from their answers:" : "Here's what we'll build from your answers:"}</p>
       <div class="stats">
@@ -272,7 +273,7 @@ function renderOnboarding() {
         <h3 class="mt">💊 Your supplement stack</h3>
         <div class="sumchips mt4">${supplementStack(draft).map((s) => `<span class="sumchip">${s.icon} ${s.name}</span>`).join("")}</div>
         <h3 class="mt">📊 The journey</h3>
-        <div class="muted small mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
+        <div class="phase-chip mt4">Foundation → Build → Strength → Peak, with recovery deload weeks at 13, 26 and 39 — progressed automatically every week.</div>
         ${d.role === "trainer" ? `<div class="tnote mt">🎓 Trainer mode: phase banners include the programming rationale, you can reorder days & exercises and edit sets/reps/rest in Plan → Week → ✏️ Customize, and week sheets print clean for clients.</div>` : ""}
       </div>`;
     footer = `<button class="btn gold" id="wfinish">${editing ? "Save & regenerate my plan →" : "Generate my 1-year plan →"}</button>`;
@@ -641,6 +642,19 @@ function applyCustom(weekPlan, week) {
 
 /* ================= Today tab ================= */
 
+// How many top sets were logged today, out of how many working exercises.
+function todaySetProgress(day, week) {
+  if (!day.isTraining) return null;
+  const lifts = state.progress.lifts || {};
+  const working = day.workout.exercises.filter((ex) => ex.sets !== "—");
+  const target = working.reduce((sum, ex) => sum + (parseInt(String(ex.sets), 10) || 1), 0);
+  const logged = working.reduce((sum, ex) => {
+    const arr = lifts[ex.name] || [];
+    return sum + arr.filter((l) => l.week === week).length;
+  }, 0);
+  return { logged, target, working: working.length };
+}
+
 function renderToday() {
   const p = state.profile;
   const t = todayInfo();
@@ -652,36 +666,63 @@ function renderToday() {
   const done = !!state.progress.completed[key];
   const x = xpStats();
   const st = streaks();
+  const prog = todaySetProgress(day, t.week);
+  const trainer = p.role === "trainer";
+
+  // Streak read as five flames — lit up to the current run, capped at 5.
+  const flames = Array.from({ length: 5 }, (_, i) =>
+    `<span class="fy-flame ${i < Math.min(st.current, 5) ? "lit" : ""}">🔥</span>`).join("");
 
   $view().innerHTML = `
     <div class="today-hero">
       <div class="th-top">
         <div>
+          <div class="fy-eyebrow">${day.dayName} · Week ${t.week} · ${ph.name}</div>
           <div class="th-day">Day ${t.dayNum} <span class="of">/ 365</span></div>
-          <div class="muted">${p.role === "trainer" ? `👤 Client: ${esc(p.name)}` : `Hi ${esc(p.name)}`} · Week ${t.week} · ${ph.name} · ${EXPERIENCE[p.experience].label}</div>
+          <div class="fy-who muted">${trainer
+            ? `👤 Client: <strong>${esc(p.name)}</strong> · ${EXPERIENCE[p.experience].label}`
+            : `Hi ${esc(p.name)} · ${EXPERIENCE[p.experience].label}`}</div>
         </div>
         <div class="th-right">
-          <div class="th-gam">
-            <div class="flame ${st.current > 0 ? "lit" : ""}">🔥 ${st.current}</div>
-            <div class="lvl">Lv ${x.level + 1} · ${x.levelName}</div>
-            <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
+          <div class="fy-streak">
+            <div class="fy-flames">${flames}</div>
+            <div class="fy-streak-lbl">${st.current}-day streak</div>
           </div>
           <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
         </div>
       </div>
+
+      <div class="fy-xp">
+        <div class="fy-xp-top">
+          <span class="lvl">Lv ${x.level + 1} · ${x.levelName}</span>
+          <span class="fy-xp-num">${x.xp % XP_PER_LEVEL} / ${XP_PER_LEVEL} XP</span>
+        </div>
+        <div class="xpbar"><div style="width:${x.toNext * 100}%"></div></div>
+      </div>
+
       <div class="phase-chip">${ph.intensity} — ${ph.focus}
         <div class="small mt4">🎯 ${EXPERIENCE[p.experience].note}</div>
-        ${p.role === "trainer" ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
+        ${trainer ? `<div class="small mt4">📋 ${ph.pro}</div>` : ""}
       </div>
     </div>
 
     <div class="card day-focus">
       <div class="df-head">
         <h2>${day.isTraining ? `🏋️ ${day.workout.label}` : "🌿 Rest & Recovery"}</h2>
-        ${done ? `<span class="day-tag tag-done">✓ Done</span>` : ""}
+        ${done ? `<span class="day-tag tag-done">✓ Done</span>`
+          : prog ? `<span class="fy-meter">${prog.logged}<span class="fy-meter-of">/${prog.target} sets</span></span>` : ""}
       </div>
+      ${prog && !done ? `
+        <div class="fy-bar"><div style="width:${Math.min(100, (prog.logged / prog.target) * 100)}%"></div></div>` : ""}
       ${day.isTraining ? workoutTable(day.workout, t.week, ph) : `<div class="restnote">${day.restNote}</div>`}
-      <button class="btn ${done ? "ghost" : "gold"}" id="doneBtn">${done ? "Undo — not done yet" : `Mark Day ${t.dayNum} complete (+25 XP)`}</button>
+      <button class="btn ${done ? "ghost" : "gold"}" id="doneBtn">${done
+        ? "Undo — not done yet"
+        : `Mark Day ${t.dayNum} complete (+25 XP)`}</button>
+      <div class="fy-hint muted small">${done
+        ? `Streak is now ${st.current} ${st.current === 1 ? "day" : "days"}. Rest well.`
+        : prog && prog.logged >= prog.target
+          ? "Every set is in — claim the day."
+          : "Log your top sets as you go; they set next week's targets."}</div>
     </div>
 
     <div class="card">${mealsBlock(day.meals, targets.calories)}</div>
@@ -793,7 +834,13 @@ function renderPlan() {
   };
 
   $view().innerHTML = `
-    <div class="pagehead"><h1>📅 Plan</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+    <div class="pagehead">
+      <div>
+        <div class="fy-eyebrow">Week ${week} · ${ph.name}</div>
+        <h1>📅 Plan</h1>
+      </div>
+      <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
+    </div>
     <div class="subnav">
       ${[["week", "🏋️ Week"], ["grocery", "🛒 Grocery"], ["supps", "💊 Supplements"], ["year", "🗺️ Year"]]
         .map(([id, label]) => `<button class="${page === id ? "active" : ""}" data-page="${id}">${label}</button>`).join("")}
@@ -904,6 +951,7 @@ function suppGuide() {
   const dietLabel = { veg: "vegetarian", nonveg: "non-vegetarian", vegan: "vegan" }[p.diet];
   return `
     <div class="card">
+      <div class="fy-eyebrow">Daily stack · ${dietLabel}</div>
       <h2>💊 Your supplement stack</h2>
       <div class="muted small mt4">Personalized for <strong>${goalLabel(p.goal).replace(/^\S+ /, "").toLowerCase()}</strong> on a <strong>${dietLabel}</strong> diet.
       Supplements are the last 5% — they top up good food, training and sleep, never replace them. Tick them off each day on the Today tab.</div>
@@ -963,6 +1011,7 @@ function groceryHtml(week, targets) {
   const groups = groceryForWeek(state.profile, targets, week);
   const ticks = (state.progress.grocery || {})[`w${week}`] || {};
   return `
+    <div class="fy-eyebrow">Shopping list · Week ${week}</div>
     <div class="muted small">Everything you need to cook this week's meals. Quantities are rounded up.</div>
     ${Object.entries(GROCERY_CATS).filter(([cat]) => groups[cat]).map(([cat, label]) => `
       <h3 class="gcat">${label}</h3>
@@ -1003,8 +1052,18 @@ function renderProgress() {
   const liftExercises = Object.keys(state.progress.lifts || {}).filter((k) => state.progress.lifts[k].length >= 2);
   if (!state.ui.chartEx || !liftExercises.includes(state.ui.chartEx)) state.ui.chartEx = liftExercises[0] || null;
 
+  // Streak read as five flames — mirrors the Today screen, capped at 5.
+  const flames = Array.from({ length: 5 }, (_, i) =>
+    `<span class="fy-flame ${i < Math.min(st.current, 5) ? "lit" : ""}">🔥</span>`).join("");
+
   $view().innerHTML = `
-    <div class="pagehead"><h1>📈 Progress</h1><button class="iconbtn helpbtn" title="How to use FitYear">?</button></div>
+    <div class="pagehead">
+      <div>
+        <div class="fy-eyebrow">Level ${x.level + 1} · ${x.levelName}</div>
+        <h1>📈 Progress</h1>
+      </div>
+      <button class="iconbtn helpbtn" title="How to use FitYear">?</button>
+    </div>
 
     <div class="levelcard card">
       <div class="lc-row">
@@ -1013,7 +1072,10 @@ function renderProgress() {
           <div class="lc-name">${x.levelName}</div>
           <div class="muted small">${x.xp} XP · ${XP_PER_LEVEL - (x.xp % XP_PER_LEVEL)} XP to next level</div>
         </div>
-        <div class="flame lit big">🔥 ${st.current}</div>
+        <div class="fy-streak">
+          <div class="fy-flames">${flames}</div>
+          <div class="fy-streak-lbl">${st.current}-day streak</div>
+        </div>
       </div>
       <div class="xpbar big"><div style="width:${x.toNext * 100}%"></div></div>
     </div>
